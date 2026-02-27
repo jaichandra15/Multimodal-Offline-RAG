@@ -1,0 +1,247 @@
+{
+	"info": {
+		"_postman_id": "rag-backend-collection",
+		"name": "RAG Backend API",
+		"description": "Complete API collection for testing RAG Backend with Ollama",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:8000/health",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"health"
+					]
+				},
+				"description": "Check system health status including database, Ollama, and knowledge base stats"
+			},
+			"response": []
+		},
+		{
+			"name": "Ingest Documents",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"documents_path\": \"documents\",\n  \"clean_existing\": false\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8000/ingest",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"ingest"
+					]
+				},
+				"description": "Ingest all documents from the documents folder. Set clean_existing to true to delete existing data first."
+			},
+			"response": []
+		},
+		{
+			"name": "Upload File",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": []
+						}
+					]
+				},
+				"url": {
+					"raw": "http://localhost:8000/upload",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"upload"
+					]
+				},
+				"description": "Upload a single file (PDF, DOCX, PPTX, XLSX, MD, TXT, MP3, WAV) and process it immediately. Returns document ID and chunks created."
+			},
+			"response": []
+		},
+		{
+			"name": "List Documents",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:8000/documents?limit=100&offset=0",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"documents"
+					],
+					"query": [
+						{
+							"key": "limit",
+							"value": "100"
+						},
+						{
+							"key": "offset",
+							"value": "0"
+						}
+					]
+				},
+				"description": "Get list of all documents in the knowledge base with pagination"
+			},
+			"response": []
+		},
+		{
+			"name": "Search Knowledge Base",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"query\": \"What is the company's mission?\",\n  \"limit\": 5\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8000/search",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"search"
+					]
+				},
+				"description": "Search the knowledge base using semantic similarity. Returns relevant chunks with similarity scores."
+			},
+			"response": []
+		},
+		{
+			"name": "Chat (Non-Streaming)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"message\": \"What does the company do?\",\n  \"conversation_history\": []\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8000/chat",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"chat"
+					]
+				},
+				"description": "Chat with the RAG assistant. Returns complete response at once."
+			},
+			"response": []
+		},
+		{
+			"name": "Chat with History",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"message\": \"Can you tell me more about their team?\",\n  \"conversation_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What does the company do?\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"The company specializes in AI solutions and intelligent automation for businesses.\"\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8000/chat",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"chat"
+					]
+				},
+				"description": "Chat with conversation history for context-aware responses"
+			},
+			"response": []
+		},
+		{
+			"name": "Chat (Streaming)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "Accept",
+						"value": "text/event-stream"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"message\": \"Summarize the company's key products and services\",\n  \"conversation_history\": []\n}"
+				},
+				"url": {
+					"raw": "http://localhost:8000/chat/stream",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8000",
+					"path": [
+						"chat",
+						"stream"
+					]
+				},
+				"description": "Chat with streaming response (Server-Sent Events). Response comes in real-time chunks."
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		}
+	]
+}

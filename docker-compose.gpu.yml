@@ -1,0 +1,14 @@
+# GPU Override - Use with: docker-compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Only use this on systems with NVIDIA GPU and Docker GPU support configured
+
+services:
+  backend:
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
