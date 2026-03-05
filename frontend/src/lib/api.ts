@@ -13,7 +13,7 @@ import type {
   Citation,
 } from './types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://8000-01kjftqgyazawrg2zrdhsgqpp2.cloudspaces.litng.ai' ;
 
 class APIError extends Error {
   constructor(

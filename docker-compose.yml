@@ -1,3 +1,5 @@
+version: "3.8"
+
 services:
   # PostgreSQL with PGVector
   postgres:
@@ -17,6 +19,16 @@ services:
       timeout: 5s
       retries: 5
 
+  # Ollama (NEW)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
   # FastAPI Backend
   backend:
     build:
@@ -26,18 +38,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ollama:
+        condition: service_started
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/offrag
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-mistral}
-      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_LLM_MODEL: phi3:mini
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
       LOG_LEVEL: INFO
     ports:
       - "8000:8000"
     volumes:
       - .:/app
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command: ["python", "-m", "backend.main"]
     restart: unless-stopped
 
@@ -50,7 +62,7 @@ services:
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: https://8000-01kjftqgyazawrg2zrdhsgqpp2.cloudspaces.litng.ai
     ports:
       - "3000:3000"
     restart: unless-stopped
@@ -64,18 +76,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ollama:
+        condition: service_started
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/offrag
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-mistral}
-      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_BASE_URL: http://rag_ollama:11434
+      OLLAMA_LLM_MODEL: phi3:mini
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
     volumes:
       - .:/app
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command: ["python", "-m", "backend.ingestion.pipeline", "--documents", "documents"]
     profiles:
       - ingestion
 
 volumes:
   postgres_data:
+  ollama_data:
