@@ -1,7 +1,31 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Paperclip, FileText, X, Sparkles, MessageSquare, Trash2, Plus, BookOpen, ChevronDown, ChevronUp, User, Edit2, Check, BarChart3 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import {
+  Send,
+  Loader2,
+  Paperclip,
+  FileText,
+  X,
+  Sparkles,
+  MessageSquare,
+  Trash2,
+  Plus,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  User,
+  Edit2,
+  Check,
+  BarChart3,
+  Database,
+  Upload,
+  CheckCircle2,
+  AlertCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Bot,
+} from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,20 +43,221 @@ import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import type { Citation } from '@/lib/types';
 
+// ─── Typing Indicator ────────────────────────────────────────────────────────
+function TypingIndicator() {
+  return (
+    <div className="flex gap-4 justify-start">
+      <div className="bg-gradient-to-br from-violet-600 to-indigo-600 p-2 rounded-xl h-9 w-9 flex-shrink-0 flex items-center justify-center shadow-md">
+        <Bot className="h-4 w-4 text-white" />
+      </div>
+      <div className="rounded-2xl px-4 py-3 bg-card border border-border shadow-sm flex items-center gap-1.5">
+        <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:0ms]" />
+        <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:150ms]" />
+        <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:300ms]" />
+      </div>
+    </div>
+  );
+}
+
+// ─── Citation Panel ───────────────────────────────────────────────────────────
+function CitationPanel({ citations }: { citations: Citation[] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!citations || citations.length === 0) return null;
+
+  return (
+    <div className="mt-2 rounded-xl border border-border bg-muted/40 overflow-hidden">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+      >
+        <BookOpen className="h-3.5 w-3.5 flex-shrink-0" />
+        <span className="font-medium">
+          {citations.length} source{citations.length > 1 ? 's' : ''} cited
+        </span>
+        {expanded ? (
+          <ChevronUp className="h-3.5 w-3.5 ml-auto" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 ml-auto" />
+        )}
+      </button>
+
+      {expanded && (
+        <div className="px-3 pb-3 grid gap-1.5">
+          {citations.map((c) => {
+            const filename = c.document_source.split('/').pop() || c.document_source;
+            const pageNum = c.metadata?.page || c.metadata?.page_number;
+            return (
+              <div
+                key={c.number}
+                className="flex items-start gap-2.5 p-2 rounded-lg bg-background border border-border/60"
+              >
+                <span className="flex-shrink-0 h-5 w-5 rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center text-[10px] font-bold mt-0.5">
+                  {c.number}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate">{c.document_title || filename}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">
+                    {filename}{pageNum ? ` · Page ${pageNum}` : ''}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Document Panel (overlay modal) ─────────────────────────────────────────
+function DocumentPanel({
+  open,
+  onClose,
+  documents,
+  loading,
+}: {
+  open: boolean;
+  onClose: () => void;
+  documents: any[];
+  loading: boolean;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-end">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      {/* Panel */}
+      <div className="relative z-10 flex flex-col h-full w-80 bg-background border-l shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
+          <div className="flex items-center gap-2">
+            <Database className="h-4 w-4 text-violet-500" />
+            <h3 className="font-semibold text-sm">Knowledge Base</h3>
+            {documents.length > 0 && (
+              <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-muted text-[10px] font-medium flex items-center justify-center">
+                {documents.length}
+              </span>
+            )}
+          </div>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <ScrollArea className="flex-1 p-3">
+          {loading ? (
+            <div className="flex items-center justify-center h-32">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : documents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 text-center gap-3">
+              <Upload className="h-8 w-8 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">No documents yet</p>
+              <p className="text-xs text-muted-foreground/70">
+                Upload a file using the paperclip icon in the chat input
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {documents.map((doc: any) => (
+                <Card key={doc.id} className="p-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="h-8 w-8 rounded-lg bg-violet-500/10 flex items-center justify-center flex-shrink-0">
+                      <FileText className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate leading-tight">{doc.title}</p>
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">{doc.source}</p>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
+// ─── Upload Progress Banner ──────────────────────────────────────────────────
+function UploadBanner({
+  uploading,
+  progress,
+  filename,
+}: {
+  uploading: boolean;
+  progress: number;
+  filename: string;
+}) {
+  if (!uploading) return null;
+  return (
+    <div className="mx-4 mb-3 p-3 bg-violet-500/10 border border-violet-500/30 rounded-xl flex items-center gap-3">
+      <div className="h-8 w-8 rounded-lg bg-violet-500/20 flex items-center justify-center flex-shrink-0">
+        <Upload className="h-4 w-4 text-violet-600 dark:text-violet-400 animate-pulse" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate text-violet-700 dark:text-violet-300">{filename}</p>
+        <div className="flex items-center gap-2 mt-1">
+          <Progress value={progress} className="h-1.5 flex-1" />
+          <span className="text-xs text-violet-600 dark:text-violet-400 font-medium">
+            {progress}%
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Empty State ─────────────────────────────────────────────────────────────
+const STARTER_PROMPTS = [
+  'Summarize the key points from the uploaded documents',
+  'What topics are covered in the knowledge base?',
+  'Find information about a specific topic',
+];
+
+function EmptyState({ onPrompt }: { onPrompt: (s: string) => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center px-4">
+      <div className="bg-gradient-to-br from-violet-600 to-indigo-600 p-5 rounded-3xl mb-5 shadow-lg shadow-violet-500/20">
+        <Sparkles className="h-12 w-12 text-white" />
+      </div>
+      <h2 className="text-2xl font-bold mb-2">RAG Knowledge Assistant</h2>
+      <p className="text-muted-foreground max-w-sm mb-8 text-sm leading-relaxed">
+        Upload documents using the <strong>📎 paperclip</strong> button, then ask questions. I'll
+        find answers from your knowledge base.
+      </p>
+
+      <div className="w-full max-w-sm space-y-2">
+        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-3">
+          Try asking
+        </p>
+        {STARTER_PROMPTS.map((p) => (
+          <button
+            key={p}
+            onClick={() => onPrompt(p)}
+            className="w-full text-left px-4 py-2.5 rounded-xl border border-border bg-card hover:bg-muted hover:border-violet-400/50 transition-all text-sm text-muted-foreground hover:text-foreground"
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export function ChatInterface() {
   const [input, setInput] = useState('');
-  const [currentStreamingMessage, setCurrentStreamingMessage] = useState('');
-  const [currentCitations, setCurrentCitations] = useState<Citation[]>([]);
+  const [streamingText, setStreamingText] = useState('');
+  const [streamingCitations, setStreamingCitations] = useState<Citation[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadingFileName, setUploadingFileName] = useState('');
-  const [showDocuments, setShowDocuments] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
-  const [expandedCitations, setExpandedCitations] = useState<Set<number>>(new Set());
-  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  
-  const { 
+
+  const {
     conversations,
     currentConversationId,
     createConversation,
@@ -44,27 +269,33 @@ export function ChatInterface() {
     isStreaming,
     getCurrentMessages,
   } = useChatStore();
-  
+
   const messages = getCurrentMessages();
   const { useStreaming } = useSettingsStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: documentsData, refetch } = useQuery({
+  // Fetch documents for the knowledge base panel
+  const { data: docsData, isLoading: docsLoading, refetch: refetchDocs } = useQuery({
     queryKey: ['documents'],
-    queryFn: () => api.getDocuments(10),
-    enabled: showDocuments,
+    queryFn: () => api.getDocuments(100),
+    enabled: showDocs,
   });
-  
-  const { data: documentCount } = useQuery({
+
+  const { data: docCountData } = useQuery({
     queryKey: ['documents-count'],
     queryFn: () => api.getDocuments(1),
+    refetchInterval: 30_000,
   });
 
+  const docCount = docCountData?.total ?? 0;
+
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, currentStreamingMessage]);
+  }, [messages, streamingText]);
 
+  // ── File Upload ────────────────────────────────────────────────────────────
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -73,40 +304,32 @@ export function ChatInterface() {
     setUploadProgress(0);
     setUploadingFileName(file.name);
 
-    // Add a system message showing file is uploading
-    const uploadStartMessage = {
-      role: 'assistant' as const,
-      content: `📎 Processing **${file.name}**...`,
-    };
-    addMessage(uploadStartMessage);
+    addMessage({
+      role: 'assistant',
+      content: `📎 Processing **${file.name}**…`,
+    });
 
-    const progressInterval = setInterval(() => {
-      setUploadProgress((prev) => Math.min(prev + 10, 90));
-    }, 200);
+    const interval = setInterval(() => {
+      setUploadProgress((p) => Math.min(p + 8, 88));
+    }, 250);
 
     try {
-      const response = await api.uploadFile(file);
+      const resp = await api.uploadFile(file);
       setUploadProgress(100);
-      
-      // Add success message
-      const successMessage = {
-        role: 'assistant' as const,
-        content: `✅ Successfully uploaded and processed **${file.name}**!\n\n📊 Created ${response.chunks_created} searchable chunks.\n\nYou can now ask questions about this document.`,
-      };
-      addMessage(successMessage);
-      
-      toast.success('Document processed successfully!');
-      refetch();
-    } catch (error: any) {
-      // Add error message
-      const errorMessage = {
-        role: 'assistant' as const,
-        content: `❌ Failed to upload **${file.name}**: ${error.message}`,
-      };
-      addMessage(errorMessage);
-      toast.error(`Upload failed: ${error.message}`);
+      addMessage({
+        role: 'assistant',
+        content: `✅ **${file.name}** uploaded successfully!\n\nCreated **${resp.chunks_created}** searchable chunks. You can now ask questions about this document.`,
+      });
+      toast.success('Document added to knowledge base');
+      refetchDocs();
+    } catch (err: any) {
+      addMessage({
+        role: 'assistant',
+        content: `❌ Failed to upload **${file.name}**: ${err.message}`,
+      });
+      toast.error(`Upload failed: ${err.message}`);
     } finally {
-      clearInterval(progressInterval);
+      clearInterval(interval);
       setUploading(false);
       setUploadProgress(0);
       setUploadingFileName('');
@@ -114,62 +337,54 @@ export function ChatInterface() {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+  // ── Send Message ───────────────────────────────────────────────────────────
+  const handleSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || isStreaming) return;
 
-    const userMessage = { role: 'user' as const, content: input.trim() };
-    addMessage(userMessage);
+    const userMsg = { role: 'user' as const, content: text };
+    addMessage(userMsg);
     setInput('');
+    setIsStreaming(true);
 
     if (useStreaming) {
-      setIsStreaming(true);
-      setCurrentStreamingMessage('');
-      setCurrentCitations([]);
+      setStreamingText('');
+      setStreamingCitations([]);
 
       try {
         await api.chatStream(
-          {
-            message: userMessage.content,
-            conversation_history: messages,
-          },
-          (chunk) => {
-            setCurrentStreamingMessage((prev) => prev + chunk);
-          },
+          { message: userMsg.content, conversation_history: messages },
+          (chunk) => setStreamingText((prev) => prev + chunk),
           (fullResponse, citations) => {
             addMessage({ role: 'assistant', content: fullResponse, citations });
-            setCurrentStreamingMessage('');
-            setCurrentCitations([]);
+            setStreamingText('');
+            setStreamingCitations([]);
             setIsStreaming(false);
           },
           (error) => {
             toast.error(`Error: ${error.message}`);
-            setCurrentStreamingMessage('');
-            setCurrentCitations([]);
+            setStreamingText('');
+            setStreamingCitations([]);
             setIsStreaming(false);
           },
-          (citations) => {
-            setCurrentCitations(citations);
-          }
+          (citations) => setStreamingCitations(citations),
         );
-      } catch (error: any) {
-        toast.error(`Failed to send message: ${error.message}`);
+      } catch {
+        setStreamingText('');
+        setStreamingCitations([]);
         setIsStreaming(false);
       }
     } else {
-      setIsStreaming(true);
       try {
-        const response = await api.chat({
-          message: userMessage.content,
-          conversation_history: messages,
-        });
-        addMessage({ role: 'assistant', content: response.response, citations: response.citations });
-      } catch (error: any) {
-        toast.error(`Failed to send message: ${error.message}`);
+        const resp = await api.chat({ message: userMsg.content, conversation_history: messages });
+        addMessage({ role: 'assistant', content: resp.response, citations: resp.citations });
+      } catch (err: any) {
+        toast.error(`Failed to send message: ${err.message}`);
       } finally {
         setIsStreaming(false);
       }
     }
-  };
+  }, [input, isStreaming, messages, useStreaming, addMessage, setIsStreaming]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -178,85 +393,111 @@ export function ChatInterface() {
     }
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Sidebar - Chat History */}
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* ─── Conversation Sidebar ─────────────────────────────────────────── */}
       {showSidebar && (
-        <div className="w-64 border-r bg-muted/30 flex flex-col h-full">
-          <div className="p-3 border-b flex-shrink-0">
+        <aside className="w-60 border-r bg-muted/20 flex flex-col h-full flex-shrink-0">
+          {/* Sidebar header */}
+          <div className="p-3 border-b flex items-center gap-2 flex-shrink-0">
+            <div className="bg-gradient-to-br from-violet-600 to-indigo-600 p-1.5 rounded-lg">
+              <Sparkles className="h-3.5 w-3.5 text-white" />
+            </div>
+            <span className="text-sm font-semibold flex-1">RAG Assistant</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setShowSidebar(false)}
+              title="Collapse sidebar"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* New chat button */}
+          <div className="p-2 border-b flex-shrink-0">
             <Button
               onClick={() => createConversation()}
-              className="w-full justify-start"
+              className="w-full justify-start gap-2 h-8 text-sm"
               variant="outline"
             >
-              <Plus className="h-4 w-4 mr-2" />
+              <Plus className="h-3.5 w-3.5" />
               New Chat
             </Button>
           </div>
+
+          {/* Conversation list */}
           <ScrollArea className="flex-1 overflow-y-auto">
-            <div className="p-2 space-y-1">
+            <div className="p-2 space-y-0.5">
+              {conversations.length === 0 && (
+                <div className="text-center py-8 text-xs text-muted-foreground">
+                  No conversations yet
+                </div>
+              )}
               {conversations.map((conv) => (
                 <div
                   key={conv.id}
-                  className={`group flex items-center gap-2 p-2 rounded-lg cursor-pointer hover:bg-muted transition-colors ${
-                    currentConversationId === conv.id ? 'bg-muted' : ''
+                  className={`group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                    currentConversationId === conv.id
+                      ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                      : 'hover:bg-muted/60 text-muted-foreground hover:text-foreground'
                   }`}
                   onClick={() => {
-                    if (editingConversationId !== conv.id) {
-                      setCurrentConversation(conv.id);
-                    }
+                    if (editingId !== conv.id) setCurrentConversation(conv.id);
                   }}
                 >
-                  <MessageSquare className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                  <div className="flex-1 min-w-0">
-                    {editingConversationId === conv.id ? (
-                      <input
-                        type="text"
-                        value={editingTitle}
-                        onChange={(e) => setEditingTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            renameConversation(conv.id, editingTitle);
-                            setEditingConversationId(null);
-                          } else if (e.key === 'Escape') {
-                            setEditingConversationId(null);
-                          }
-                        }}
-                        className="text-sm bg-background border border-border rounded px-2 py-1 w-full"
-                        autoFocus
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    ) : (
-                      <>
-                        <p className="text-sm truncate">{conv.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(conv.updatedAt, { addSuffix: true })}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                  {editingConversationId === conv.id ? (
+                  <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
+
+                  {editingId === conv.id ? (
+                    <input
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          renameConversation(conv.id, editingTitle);
+                          setEditingId(null);
+                        } else if (e.key === 'Escape') {
+                          setEditingId(null);
+                        }
+                      }}
+                      className="flex-1 text-xs bg-background border border-border rounded px-1.5 py-0.5 outline-none"
+                      autoFocus
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{conv.title}</p>
+                      <p className="text-[10px] text-muted-foreground/70">
+                        {formatDistanceToNow(conv.updatedAt, { addSuffix: true })}
+                      </p>
+                    </div>
+                  )}
+
+                  {editingId === conv.id ? (
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6"
+                      className="h-5 w-5 flex-shrink-0"
                       onClick={(e) => {
                         e.stopPropagation();
                         renameConversation(conv.id, editingTitle);
-                        setEditingConversationId(null);
+                        setEditingId(null);
                       }}
                     >
                       <Check className="h-3 w-3" />
                     </Button>
                   ) : (
-                    <>
+                    <div className="hidden group-hover:flex items-center gap-0.5">
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        className="h-5 w-5"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setEditingConversationId(conv.id);
+                          setEditingId(conv.id);
                           setEditingTitle(conv.title);
                         }}
                       >
@@ -265,7 +506,7 @@ export function ChatInterface() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        className="h-5 w-5 text-destructive/70 hover:text-destructive"
                         onClick={(e) => {
                           e.stopPropagation();
                           deleteConversation(conv.id);
@@ -273,107 +514,122 @@ export function ChatInterface() {
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
-                    </>
+                    </div>
                   )}
                 </div>
               ))}
-              {conversations.length === 0 && (
-                <div className="text-center p-8 text-sm text-muted-foreground">
-                  No conversations yet
-                </div>
-              )}
             </div>
           </ScrollArea>
-        </div>
+
+          {/* Sidebar footer */}
+          <div className="p-2 border-t flex-shrink-0">
+            <Link href="/metrics">
+              <Button variant="ghost" className="w-full justify-start gap-2 h-8 text-xs text-muted-foreground">
+                <BarChart3 className="h-3.5 w-3.5" />
+                Metrics Dashboard
+              </Button>
+            </Link>
+          </div>
+        </aside>
       )}
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Header */}
-        <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex-shrink-0">
-          <div className="container max-w-4xl mx-auto px-4 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg">
-                  <Sparkles className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-xl font-semibold">RAG Assistant</h1>
-                  <p className="text-xs text-muted-foreground">
-                    Powered by Ollama
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Link href="/metrics">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                  >
-                    <BarChart3 className="h-4 w-4 mr-2" />
-                    Metrics
-                  </Button>
-                </Link>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowDocuments(!showDocuments)}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  {documentCount?.total || 0} Docs
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => createConversation()}
-                  disabled={messages.length === 0}
-                >
-                  New Chat
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* ─── Main Chat Panel ─────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
+        {/* Top bar */}
+        <header className="border-b bg-background/95 backdrop-blur flex-shrink-0">
+          <div className="flex items-center gap-3 px-4 h-14">
+            {/* Collapse/expand sidebar */}
+            {!showSidebar && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setShowSidebar(true)}
+                title="Open sidebar"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </Button>
+            )}
 
-        {/* Messages */}
+            {/* Current conversation title (or welcome) */}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">
+                {conversations.find((c) => c.id === currentConversationId)?.title ?? 'New Chat'}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Powered by Ollama</p>
+            </div>
+
+            {/* Knowledge base button */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 h-8 text-xs"
+              onClick={() => setShowDocs(true)}
+            >
+              <Database className="h-3.5 w-3.5" />
+              {docCount > 0 ? (
+                <span>
+                  {docCount} Doc{docCount !== 1 ? 's' : ''}
+                </span>
+              ) : (
+                <span>Knowledge Base</span>
+              )}
+            </Button>
+
+            {/* New chat */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => createConversation()}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New Chat
+            </Button>
+          </div>
+        </header>
+
+        {/* Message list */}
         <ScrollArea className="flex-1 overflow-y-auto">
-          <div className="container max-w-4xl mx-auto px-4 py-6">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center">
-                <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-4 rounded-2xl mb-4">
-                  <Sparkles className="h-12 w-12 text-white" />
-                </div>
-                <h2 className="text-2xl font-semibold mb-2">
-                  How can I help you today?
-                </h2>
-                <p className="text-muted-foreground max-w-md">
-                  Upload documents and ask questions. I'll help you find answers
-                  from your knowledge base.
-                </p>
-              </div>
+          <div className="max-w-3xl mx-auto px-4 py-6">
+            {messages.length === 0 && !streamingText ? (
+              <EmptyState onPrompt={(s) => setInput(s)} />
             ) : (
               <div className="space-y-6">
-                {messages.map((message, index) => (
-                  <div key={index}>
+                {messages.map((msg, idx) => (
+                  <div key={idx}>
                     <div
-                      className={`flex gap-4 ${
-                        message.role === 'user' ? 'justify-end' : 'justify-start'
+                      className={`flex gap-3 ${
+                        msg.role === 'user' ? 'justify-end' : 'justify-start'
                       }`}
                     >
-                      {message.role === 'assistant' && (
-                        <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg h-8 w-8 flex-shrink-0">
-                          <Sparkles className="h-4 w-4 text-white" />
+                      {/* Bot avatar */}
+                      {msg.role === 'assistant' && (
+                        <div className="bg-gradient-to-br from-violet-600 to-indigo-600 p-2 rounded-xl h-9 w-9 flex-shrink-0 flex items-center justify-center shadow-md">
+                          <Bot className="h-4 w-4 text-white" />
                         </div>
                       )}
-                      <div className={message.role === 'user' ? 'max-w-[85%]' : 'flex-1 max-w-[85%]'}>
+
+                      {/* Bubble */}
+                      <div
+                        className={
+                          msg.role === 'user' ? 'max-w-[78%]' : 'flex-1 max-w-[84%]'
+                        }
+                      >
                         <div
-                          className={`rounded-xl px-4 py-3 border ${
-                            message.role === 'user'
-                              ? 'bg-primary text-primary-foreground border-primary'
-                              : 'bg-card border-border'
+                          className={`rounded-2xl px-4 py-3 shadow-sm ${
+                            msg.role === 'user'
+                              ? 'bg-gradient-to-br from-violet-600 to-indigo-600 text-white'
+                              : 'bg-card border border-border'
                           }`}
                         >
-                          <div className="prose prose-base dark:prose-invert max-w-none">
+                          <div
+                            className={`prose prose-sm max-w-none ${
+                              msg.role === 'user'
+                                ? 'prose-invert'
+                                : 'dark:prose-invert'
+                            }`}
+                          >
                             <ReactMarkdown
                               remarkPlugins={[remarkGfm]}
                               components={{
@@ -396,102 +652,51 @@ export function ChatInterface() {
                                 },
                               }}
                             >
-                              {message.content}
+                              {msg.content}
                             </ReactMarkdown>
                           </div>
                         </div>
-                        
-                        {/* Citations Display */}
-                        {message.role === 'assistant' && message.citations && message.citations.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground px-2">
-                              <BookOpen className="h-3 w-3" />
-                              <span>{message.citations.length} source{message.citations.length > 1 ? 's' : ''}</span>
-                            </div>
-                            {message.citations.map((citation) => {
-                              // Extract filename from source
-                              const filename = citation.document_source.split('/').pop() || citation.document_source;
-                              // Extract page number from metadata if available
-                              const pageNum = citation.metadata?.page || citation.metadata?.page_number;
-                              
-                              return (
-                                <Card key={citation.number} className="p-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex-shrink-0 h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium">
-                                      {citation.number}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-1 text-sm">
-                                        <span className="font-medium truncate">{filename}</span>
-                                        {pageNum && (
-                                          <span className="text-muted-foreground flex-shrink-0">• Page {pageNum}</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </Card>
-                              );
-                            })}
-                          </div>
+
+                        {/* Citations */}
+                        {msg.role === 'assistant' && msg.citations && (
+                          <CitationPanel citations={msg.citations} />
                         )}
                       </div>
-                      {message.role === 'user' && (
-                        <div className="bg-primary p-2 rounded-lg h-8 w-8 flex-shrink-0 flex items-center justify-center">
-                          <User className="h-4 w-4 text-primary-foreground" />
+
+                      {/* User avatar */}
+                      {msg.role === 'user' && (
+                        <div className="bg-muted border border-border p-2 rounded-xl h-9 w-9 flex-shrink-0 flex items-center justify-center">
+                          <User className="h-4 w-4 text-muted-foreground" />
                         </div>
                       )}
                     </div>
                   </div>
                 ))}
 
-                {currentStreamingMessage && (
+                {/* Streaming response */}
+                {isStreaming && (
                   <div>
-                    <div className="flex gap-4 justify-start">
-                      <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-2 rounded-lg h-8 w-8 flex-shrink-0">
-                        <Sparkles className="h-4 w-4 text-white" />
-                      </div>
-                      <div className="flex-1 max-w-[85%]">
-                        <div className="rounded-xl px-4 py-3 bg-card border border-border">
-                          <div className="prose prose-base dark:prose-invert max-w-none">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {currentStreamingMessage}
-                            </ReactMarkdown>
-                          </div>
+                    {streamingText ? (
+                      <div className="flex gap-3 justify-start">
+                        <div className="bg-gradient-to-br from-violet-600 to-indigo-600 p-2 rounded-xl h-9 w-9 flex-shrink-0 flex items-center justify-center shadow-md">
+                          <Bot className="h-4 w-4 text-white" />
                         </div>
-                        
-                        {/* Current Citations During Streaming */}
-                        {currentCitations.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground px-2">
-                              <BookOpen className="h-3 w-3" />
-                              <span>{currentCitations.length} source{currentCitations.length > 1 ? 's' : ''}</span>
+                        <div className="flex-1 max-w-[84%]">
+                          <div className="rounded-2xl px-4 py-3 bg-card border border-border shadow-sm">
+                            <div className="prose prose-sm dark:prose-invert max-w-none">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {streamingText}
+                              </ReactMarkdown>
                             </div>
-                            {currentCitations.map((citation) => {
-                              const filename = citation.document_source.split('/').pop() || citation.document_source;
-                              const pageNum = citation.metadata?.page || citation.metadata?.page_number;
-                              
-                              return (
-                                <Card key={citation.number} className="p-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex-shrink-0 h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium">
-                                      {citation.number}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-1 text-sm">
-                                        <span className="font-medium truncate">{filename}</span>
-                                        {pageNum && (
-                                          <span className="text-muted-foreground flex-shrink-0">• Page {pageNum}</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </Card>
-                              );
-                            })}
                           </div>
-                        )}
+                          {streamingCitations.length > 0 && (
+                            <CitationPanel citations={streamingCitations} />
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <TypingIndicator />
+                    )}
                   </div>
                 )}
 
@@ -501,114 +706,80 @@ export function ChatInterface() {
           </div>
         </ScrollArea>
 
-        {/* Input Area */}
-        <div className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex-shrink-0">
-          <div className="container max-w-4xl mx-auto px-4 py-4">
-            {uploading && (
-              <div className="mb-3 p-4 bg-muted rounded-xl border border-border">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <FileText className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {uploadingFileName}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Processing document...
-                    </p>
-                  </div>
-                  <span className="text-sm font-medium">{uploadProgress}%</span>
-                </div>
-                <Progress value={uploadProgress} className="h-1.5" />
-              </div>
-            )}
-            <div className="relative">
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Message RAG Assistant..."
-                className="min-h-[60px] pr-24 resize-none rounded-2xl"
-                disabled={isStreaming || uploading}
+        {/* ── Input area ──────────────────────────────────────────────────── */}
+        <div className="border-t bg-background/95 backdrop-blur flex-shrink-0">
+          {/* Upload progress */}
+          <UploadBanner
+            uploading={uploading}
+            progress={uploadProgress}
+            filename={uploadingFileName}
+          />
+
+          <div className="max-w-3xl mx-auto px-4 py-3">
+            <div className="flex gap-2 items-end">
+              {/* File attach */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={handleFileUpload}
+                disabled={uploading || isStreaming}
+                accept=".pdf,.docx,.pptx,.xlsx,.md,.txt,.mp3,.wav,.m4a,.flac"
               />
-              <div className="absolute right-2 bottom-2 flex gap-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  disabled={uploading}
-                  accept=".pdf,.docx,.pptx,.xlsx,.md,.txt,.mp3,.wav,.m4a,.flac"
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 flex-shrink-0 rounded-xl"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || isStreaming}
+                title="Upload document"
+              >
+                <Paperclip className="h-4 w-4" />
+              </Button>
+
+              {/* Message input */}
+              <div className="flex-1 relative">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask a question… (Enter to send, Shift+Enter for new line)"
+                  className="min-h-[42px] max-h-[160px] resize-none rounded-xl py-2.5 pr-3 text-sm leading-relaxed"
+                  disabled={isStreaming || uploading}
+                  rows={1}
                 />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 rounded-lg"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-                <Button
-                  onClick={handleSend}
-                  disabled={!input.trim() || isStreaming || uploading}
-                  size="icon"
-                  className="h-8 w-8 rounded-lg"
-                >
-                  {isStreaming ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                </Button>
               </div>
+
+              {/* Send */}
+              <Button
+                onClick={handleSend}
+                disabled={!input.trim() || isStreaming || uploading}
+                size="icon"
+                className="h-10 w-10 flex-shrink-0 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 shadow-md"
+                title="Send message"
+              >
+                {isStreaming ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground text-center mt-2">
-              Upload documents with the paperclip or ask questions directly
+
+            <p className="text-[11px] text-muted-foreground text-center mt-2">
+              📎 Upload docs · Ask questions · Get cited answers from your knowledge base
             </p>
           </div>
         </div>
       </div>
 
-      {/* Sidebar - Documents */}
-      {showDocuments && (
-        <div className="w-80 border-l bg-muted/30 flex flex-col h-full">
-          <div className="p-4 border-b flex items-center justify-between flex-shrink-0">
-            <h3 className="font-semibold">Documents</h3>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setShowDocuments(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          <ScrollArea className="flex-1 p-4 overflow-y-auto">
-            <div className="space-y-2">
-              {documentsData?.documents.map((doc) => (
-                <Card key={doc.id} className="p-3">
-                  <div className="flex items-start gap-2">
-                    <FileText className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{doc.title}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {doc.source}
-                      </p>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-              {documentsData?.documents.length === 0 && (
-                <div className="text-center p-8 text-sm text-muted-foreground">
-                  No documents yet. Upload one to get started!
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-      )}
+      {/* ─── Document Panel (overlay) ─────────────────────────────────────── */}
+      <DocumentPanel
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        documents={docsData?.documents ?? []}
+        loading={docsLoading}
+      />
     </div>
   );
 }

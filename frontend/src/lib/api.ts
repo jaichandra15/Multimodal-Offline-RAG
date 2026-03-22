@@ -88,35 +88,41 @@ export const api = {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
+        const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            try {
-              const parsed = JSON.parse(data);
-              
-              if (parsed.chunk) {
-                fullResponse += parsed.chunk;
-                onChunk(parsed.chunk);
-              }
-              
-              if (parsed.citations) {
-                citations = parsed.citations;
-                onCitations?.(citations);
-              }
-              
-              if (parsed.status === 'done') {
-                onComplete?.(fullResponse, citations);
-              }
-              
-              if (parsed.error) {
-                throw new Error(parsed.error);
-              }
-            } catch (e) {
-              // Ignore parse errors for non-JSON lines
-            }
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (!data) continue;
+
+          // Separate JSON parsing (ignore malformed lines) from event handling
+          let parsed: any;
+          try {
+            parsed = JSON.parse(data);
+          } catch {
+            // Skip non-JSON status lines (e.g. blank keep-alive lines)
+            continue;
+          }
+
+          // Process parsed event — errors here propagate to the outer catch
+          if (parsed.chunk) {
+            fullResponse += parsed.chunk;
+            onChunk(parsed.chunk);
+          }
+
+          if (parsed.citations) {
+            citations = parsed.citations;
+            onCitations?.(citations);
+          }
+
+          if (parsed.status === 'done') {
+            onComplete?.(fullResponse, citations);
+          }
+
+          if (parsed.error) {
+            // This now correctly propagates to the outer catch → onError is called
+            throw new Error(parsed.error);
           }
         }
       }
