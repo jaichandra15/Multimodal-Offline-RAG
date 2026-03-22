@@ -88,7 +88,10 @@ export const api = {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          onComplete?.(fullResponse, citations);   // ✅ ADD THIS
+          // Only call onComplete here if the backend never sent a status:done event
+          if (!completed) {
+            onComplete?.(fullResponse, citations);
+          }
           break;
         }
 
@@ -121,7 +124,7 @@ export const api = {
           }
 
           if (parsed.status === 'done') {
-            completed=true,
+            completed = true;
             onComplete?.(fullResponse, citations);
           }
 
