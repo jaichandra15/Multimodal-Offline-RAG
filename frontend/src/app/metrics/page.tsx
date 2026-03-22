@@ -15,7 +15,7 @@ import {
 import {
   Activity, Clock, Database, Zap, TrendingUp, AlertCircle,
   ArrowLeft, FileText, Layers, RefreshCw, CheckCircle2, XCircle,
-  Server, Cpu,
+  Server, Cpu, ShieldCheck, BarChart3,
 } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -56,6 +56,30 @@ interface DocumentInfo {
   title: string;
   source: string;
   created_at: string;
+}
+
+// ── RAGAS types ────────────────────────────────────────────────────────────────
+interface RAGASScores {
+  faithfulness: number | null;
+  answer_relevancy: number | null;
+  context_precision: number | null;
+  context_recall: number | null;
+}
+
+interface RAGASEvaluation {
+  id: string;
+  question: string;
+  answer: string;
+  scores: RAGASScores;
+  model_used: string;
+  evaluated_at: string;
+  has_reference: boolean;
+}
+
+interface RAGASHistory {
+  evaluations: RAGASEvaluation[];
+  total: number;
+  averages: RAGASScores;
 }
 
 // ── Prometheus parser ──────────────────────────────────────────────────────────
@@ -163,6 +187,7 @@ export default function MetricsPage() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [ragasHistory, setRagasHistory] = useState<RAGASHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
@@ -200,6 +225,16 @@ export default function MetricsPage() {
     } catch (e: any) {
       setPrometheusError("Prometheus metrics endpoint unavailable.");
       setPrometheusMetrics(null);
+    }
+
+    // 4. RAGAS evaluation history
+    try {
+      const res = await fetch(`${BASE}/evaluate/history?limit=50`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: RAGASHistory = await res.json();
+      setRagasHistory(data);
+    } catch {
+      setRagasHistory(null);
     }
 
     setLastRefresh(new Date());
@@ -342,6 +377,10 @@ export default function MetricsPage() {
             <TabsTrigger value="performance" className="text-xs gap-1.5">
               <Activity className="h-3.5 w-3.5" />
               Performance
+            </TabsTrigger>
+            <TabsTrigger value="ragas" className="text-xs gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              RAGAS Quality
             </TabsTrigger>
             <TabsTrigger value="system" className="text-xs gap-1.5">
               <Server className="h-3.5 w-3.5" />
@@ -641,6 +680,9 @@ export default function MetricsPage() {
             )}
           </TabsContent>
         </Tabs>
+
+          {/* ── RAGAS Quality tab ─────────────────────────────────────────── */}
+          <Tabs defaultValue="knowledge" className="mt-0">{/* wrapper closed above */}</Tabs>
       </main>
     </div>
   );
