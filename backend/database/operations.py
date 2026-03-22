@@ -631,3 +631,79 @@ async def search_knowledge_base(
         )
     
     return "\n\n".join(context_parts)
+
+
+# ============================================================================
+# RAGAS Evaluation Operations
+# ============================================================================
+
+from backend.database.models import RAGASEvaluation  # noqa: E402  (imported here to avoid circular)
+
+
+async def save_ragas_evaluation(
+    session: AsyncSession,
+    question: str,
+    answer: str,
+    contexts: List[str],
+    scores: Dict[str, Optional[float]],
+    reference: Optional[str] = None,
+    model_used: Optional[str] = None,
+) -> RAGASEvaluation:
+    """
+    Persist a RAGAS evaluation result to the database.
+
+    Args:
+        session:    Active async DB session (caller manages commit).
+        question:   The user question.
+        answer:     The generated answer.
+        contexts:   List of retrieved chunk texts.
+        scores:     Dict with keys faithfulness, answer_relevancy,
+                    context_precision, context_recall (values float | None).
+        reference:  Optional ground-truth answer.
+        model_used: LLM model name used for evaluation.
+
+    Returns:
+        Persisted RAGASEvaluation instance.
+    """
+    from backend.config import settings as _settings
+
+    record = RAGASEvaluation(
+        question=question,
+        answer=answer,
+        contexts=contexts,
+        reference=reference,
+        faithfulness=scores.get("faithfulness"),
+        answer_relevancy=scores.get("answer_relevancy"),
+        context_precision=scores.get("context_precision"),
+        context_recall=scores.get("context_recall"),
+        model_used=model_used or _settings.ollama_llm_model,
+    )
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return record
+
+
+async def get_ragas_history(
+    session: AsyncSession,
+    limit: int = 50,
+) -> List[RAGASEvaluation]:
+    """
+    Return the most recent RAGAS evaluations, newest first.
+
+    Args:
+        session: Active async DB session.
+        limit:   Maximum number of records to return (default 50).
+
+    Returns:
+        List of RAGASEvaluation instances ordered by evaluated_at desc.
+    """
+    from sqlalchemy import desc as _desc
+
+    result = await session.execute(
+        select(RAGASEvaluation)
+        .order_by(_desc(RAGASEvaluation.evaluated_at))
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+

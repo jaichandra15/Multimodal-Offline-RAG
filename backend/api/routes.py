@@ -26,7 +26,12 @@ from backend.api.schemas import (
     HealthResponse,
     IngestionRequest,
     IngestionResponse,
-    FileUploadResponse
+    FileUploadResponse,
+    # RAGAS
+    RAGASEvaluationRequest,
+    RAGASEvaluationResponse,
+    RAGASScores,
+    RAGASHistoryResponse,
 )
 from backend.database.connection import get_db_session, db_manager
 from backend.database.operations import (
@@ -606,3 +611,138 @@ async def upload_file(
                 "hint": "Check if file is valid and Ollama service is running"
             }
         )
+
+
+# ============================================================================
+# RAGAS Evaluation Endpoints
+# ============================================================================
+
+def _record_to_response(record) -> RAGASEvaluationResponse:
+    """Convert a RAGASEvaluation DB record to the API response schema."""
+    return RAGASEvaluationResponse(
+        id=str(record.id),
+        question=record.question,
+        answer=record.answer,
+        scores=RAGASScores(
+            faithfulness=record.faithfulness,
+            answer_relevancy=record.answer_relevancy,
+            context_precision=record.context_precision,
+            context_recall=record.context_recall,
+        ),
+        model_used=record.model_used,
+        evaluated_at=record.evaluated_at,
+        has_reference=record.reference is not None,
+    )
+
+
+def _compute_averages(evals: list[RAGASEvaluationResponse]) -> RAGASScores:
+    """Compute rolling averages over all evaluations, ignoring None values."""
+    def _avg(values):
+        real = [v for v in values if v is not None]
+        return sum(real) / len(real) if real else None
+
+    return RAGASScores(
+        faithfulness=_avg([e.scores.faithfulness for e in evals]),
+        answer_relevancy=_avg([e.scores.answer_relevancy for e in evals]),
+        context_precision=_avg([e.scores.context_precision for e in evals]),
+        context_recall=_avg([e.scores.context_recall for e in evals]),
+    )
+
+
+@router.post(
+    "/evaluate",
+    response_model=RAGASEvaluationResponse,
+    tags=["Evaluation"],
+    summary="Run RAGAS evaluation on a RAG output triple",
+)
+async def evaluate_rag(
+    request: RAGASEvaluationRequest,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """
+    Evaluate a RAG question/answer/context triple with RAGAS metrics.
+
+    - **Faithfulness** and **AnswerRelevancy** are always computed.
+    - **ContextPrecision** and **ContextRecall** are only computed when
+      `reference` (ground-truth answer) is provided.
+
+    The evaluation runs Ollama locally as the judge LLM.
+    Expect 15-60 seconds depending on hardware.
+    """
+    from backend.core.ragas_evaluator import run_ragas_evaluation
+    from backend.database.operations import save_ragas_evaluation
+
+    scores = await run_ragas_evaluation(
+        question=request.question,
+        answer=request.answer,
+        contexts=request.contexts,
+        reference=request.reference,
+    )
+    record = await save_ragas_evaluation(
+        session=session,
+        question=request.question,
+        answer=request.answer,
+        contexts=request.contexts,
+        scores=scores,
+        reference=request.reference,
+    )
+    return _record_to_response(record)
+
+
+@router.get(
+    "/evaluate/history",
+    response_model=RAGASHistoryResponse,
+    tags=["Evaluation"],
+    summary="Fetch recent RAGAS evaluations with rolling averages",
+)
+async def get_evaluation_history(
+    limit: int = 50,
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Return the most recent RAGAS evaluations and rolling metric averages."""
+    from backend.database.operations import get_ragas_history
+
+    records = await get_ragas_history(session, limit=limit)
+    evals = [_record_to_response(r) for r in records]
+    return RAGASHistoryResponse(
+        evaluations=evals,
+        total=len(evals),
+        averages=_compute_averages(evals),
+    )
+
+
+async def background_ragas_evaluate(
+    question: str,
+    answer: str,
+    contexts: list[str],
+    session_factory,
+) -> None:
+    """
+    Fire-and-forget task: evaluate a chat turn with RAGAS and store the result.
+
+    Called via asyncio.create_task() so it never blocks the SSE stream.
+    Opens its own DB session because the originating request session will
+    have closed by the time evaluation finishes.
+    """
+    from backend.core.ragas_evaluator import run_ragas_evaluation
+    from backend.database.operations import save_ragas_evaluation
+
+    try:
+        scores = await run_ragas_evaluation(
+            question=question,
+            answer=answer,
+            contexts=contexts,
+        )
+        async with session_factory() as session:
+            await save_ragas_evaluation(
+                session=session,
+                question=question,
+                answer=answer,
+                contexts=contexts,
+                scores=scores,
+            )
+        logger.info(
+            f"RAGAS background evaluation saved for question={question[:60]!r}"
+        )
+    except Exception as exc:
+        logger.error(f"RAGAS background evaluation failed: {exc}", exc_info=True)

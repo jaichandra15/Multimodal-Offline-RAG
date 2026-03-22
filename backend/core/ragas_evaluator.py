@@ -1,0 +1,199 @@
+"""
+RAGAS Evaluator — assesses RAG quality using the ragas library.
+
+Strategy:
+  - Ollama exposes an OpenAI-compatible API at /v1.
+  - We create an openai.OpenAI client pointed at that endpoint.
+  - ragas.llms.LangchainLLMWrapper is NOT needed; ragas 0.2.x accepts
+    a LangchainLLMWrapper OR the raw openai client via llm_factory.
+  - We use ragas.llms.llm_factory() / ragas.embeddings.embedding_factory()
+    which accept any openai-compatible client.
+
+Metrics run (no ground truth needed):
+  - Faithfulness       : is the answer grounded in the retrieved context?
+  - AnswerRelevancy    : does the answer actually address the question?
+
+Design:
+  - ragas.evaluate() is synchronous and runs multiple LLM calls.
+  - We run it inside asyncio.to_thread() so it never blocks FastAPI.
+  - allow_nest_asyncio=False is set because we are already inside an
+    async event loop (FastAPI/uvicorn) — this prevents ragas from
+    trying to nest another loop and causing a RuntimeError.
+"""
+
+import asyncio
+import logging
+import math
+from typing import Optional
+
+from openai import OpenAI
+
+from backend.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _ollama_openai_client() -> OpenAI:
+    """
+    Return an OpenAI client configured to talk to Ollama's
+    OpenAI-compatible endpoint (http://<host>:11434/v1).
+    Ollama does not require a real API key.
+    """
+    base = settings.ollama_base_url.rstrip("/")
+    return OpenAI(
+        base_url=f"{base}/v1",
+        api_key="ollama",          # Ollama ignores the key but openai client requires one
+        timeout=settings.ollama_timeout,
+    )
+
+
+def _safe_float(value) -> Optional[float]:
+    """Convert a ragas score to float, returning None for NaN / None."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        return None if math.isnan(f) else f
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_evaluation_sync(
+    question: str,
+    answer: str,
+    contexts: list[str],
+    reference: Optional[str],
+) -> dict:
+    """
+    Synchronous RAGAS evaluation — must be called via asyncio.to_thread().
+
+    Returns a dict with keys:
+      faithfulness, answer_relevancy, context_precision, context_recall
+    Values are float (0-1) or None if not computed / errored.
+    """
+    # Late imports so the module loads quickly even if ragas is slow to import
+    from datasets import Dataset
+    from ragas import evaluate, RunConfig
+    from ragas.metrics import Faithfulness, AnswerRelevancy
+
+    client = _ollama_openai_client()
+
+    # ragas 0.2.x: pass an openai client directly to llm_factory/embedding_factory
+    from ragas.llms import llm_factory
+    from ragas.embeddings import embedding_factory
+
+    ragas_llm = llm_factory(
+        model=settings.ollama_llm_model,
+        client=client,
+    )
+    ragas_embeddings = embedding_factory(
+        model=settings.ollama_embedding_model,
+        provider="openai",           # tells factory to use the openai-compatible adapter
+        client=client,
+    )
+
+    # Build dataset — ragas 0.2.x expects 'question', 'answer', 'contexts'
+    data: dict = {
+        "question": [question],
+        "answer":   [answer],
+        "contexts": [contexts],     # list of lists; inner list = retrieved chunks
+    }
+    metrics_to_run = [
+        Faithfulness(),
+        AnswerRelevancy(),
+    ]
+
+    if reference:
+        data["ground_truth"] = [reference]
+        # Context metrics require ground_truth — add them only when available
+        from ragas.metrics import ContextPrecision, ContextRecall
+        metrics_to_run += [ContextPrecision(), ContextRecall()]
+
+    dataset = Dataset.from_dict(data)
+
+    # RunConfig: generous timeout for local Ollama (slow on CPU)
+    run_cfg = RunConfig(
+        timeout=settings.ollama_timeout,
+        max_retries=2,
+        max_wait=120,
+    )
+
+    result = evaluate(
+        dataset=dataset,
+        metrics=metrics_to_run,
+        llm=ragas_llm,
+        embeddings=ragas_embeddings,
+        run_config=run_cfg,
+        show_progress=False,
+        raise_exceptions=False,        # return NaN rows instead of crashing
+        allow_nest_asyncio=False,      # we are already inside an async loop (FastAPI)
+    )
+
+    df = result.to_pandas()
+    row = df.iloc[0].to_dict()
+
+    return {
+        "faithfulness":      _safe_float(row.get("faithfulness")),
+        "answer_relevancy":  _safe_float(row.get("answer_relevancy")),
+        "context_precision": _safe_float(row.get("context_precision")),
+        "context_recall":    _safe_float(row.get("context_recall")),
+    }
+
+
+async def run_ragas_evaluation(
+    question: str,
+    answer: str,
+    contexts: list[str],
+    reference: Optional[str] = None,
+) -> dict:
+    """
+    Async wrapper around RAGAS evaluation.
+
+    Runs the synchronous ragas.evaluate() in a thread pool so it does not
+    block the FastAPI event loop.
+
+    Args:
+        question:  The user question sent to the RAG pipeline.
+        answer:    The answer generated by the RAG pipeline.
+        contexts:  List of retrieved chunk texts (strings) used as context.
+        reference: Optional ground-truth answer. If supplied, also computes
+                   ContextPrecision and ContextRecall.
+
+    Returns:
+        dict with keys: faithfulness, answer_relevancy,
+                        context_precision, context_recall
+        Each value is float | None. None = metric not computed or error.
+    """
+    if not question or not answer or not contexts:
+        logger.warning("RAGAS: skipping evaluation — missing question/answer/contexts")
+        return {
+            "faithfulness": None,
+            "answer_relevancy": None,
+            "context_precision": None,
+            "context_recall": None,
+        }
+
+    logger.info(
+        f"RAGAS: starting evaluation for question={question[:60]!r} "
+        f"(contexts={len(contexts)}, reference={'yes' if reference else 'no'})"
+    )
+
+    try:
+        scores = await asyncio.to_thread(
+            _run_evaluation_sync,
+            question,
+            answer,
+            contexts,
+            reference,
+        )
+        logger.info(f"RAGAS: evaluation complete — {scores}")
+        return scores
+
+    except Exception as exc:
+        logger.error(f"RAGAS: evaluation failed — {exc}", exc_info=True)
+        return {
+            "faithfulness": None,
+            "answer_relevancy": None,
+            "context_precision": None,
+            "context_recall": None,
+        }

@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, Integer, Float, DateTime, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQL_UUID
 from sqlalchemy.orm import DeclarativeBase, relationship, Mapped, mapped_column
 from pgvector.sqlalchemy import Vector
@@ -93,3 +93,54 @@ class Chunk(Base):
     
     def __repr__(self) -> str:
         return f"<Chunk(id={self.id}, document_id={self.document_id}, index={self.chunk_index})>"
+
+
+class RAGASEvaluation(Base):
+    """
+    Stores RAGAS evaluation results for individual RAG interactions.
+    Scores are nullable floats — None means the metric was not computed.
+    """
+
+    __tablename__ = "ragas_evaluations"
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQL_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    # The user question that was evaluated
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    # The RAG-generated answer
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    # JSON list[str] of retrieved chunk texts used as context
+    contexts: Mapped[list] = mapped_column(JSON, nullable=False)
+    # Optional ground-truth reference answer (enables Context Precision / Recall)
+    reference: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # RAGAS scores (nullable = not computed)
+    faithfulness: Mapped[Optional[float]] = mapped_column(
+        "faithfulness", nullable=True
+    )
+    answer_relevancy: Mapped[Optional[float]] = mapped_column(
+        "answer_relevancy", nullable=True
+    )
+    context_precision: Mapped[Optional[float]] = mapped_column(
+        "context_precision", nullable=True
+    )
+    context_recall: Mapped[Optional[float]] = mapped_column(
+        "context_recall", nullable=True
+    )
+
+    model_used: Mapped[str] = mapped_column(String, nullable=False, default="mistral")
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<RAGASEvaluation(id={self.id}, "
+            f"faithfulness={self.faithfulness:.3f if self.faithfulness else 'N/A'}, "
+            f"answer_relevancy={self.answer_relevancy:.3f if self.answer_relevancy else 'N/A'})>"
+        )

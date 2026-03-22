@@ -24,6 +24,10 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=6.0.0",
     "python-json-logger>=2.0.0",
     "sentence-transformers>=2.2.0",
+    # ── RAGAS evaluation ──────────────────────────────────────────────────────
+    "ragas>=0.2.0",
+    "openai>=1.0.0",        # used to point at Ollama's OpenAI-compatible /v1 API
+    "datasets>=2.14.0",    # HuggingFace datasets, required by ragas.evaluate()
 ]
 
 [tool.setuptools]

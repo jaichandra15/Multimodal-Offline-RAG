@@ -149,3 +149,64 @@ class FileUploadResponse(BaseModel):
     document_id: Optional[str] = None
     chunks_created: int
     filename: str
+
+
+# ============================================================================
+# RAGAS Evaluation Schemas
+# ============================================================================
+
+class RAGASEvaluationRequest(BaseModel):
+    """Request to run RAGAS evaluation on a RAG output triple."""
+    question: str = Field(..., description="The user question")
+    answer: str = Field(..., description="The RAG-generated answer")
+    contexts: List[str] = Field(
+        ...,
+        description="List of retrieved chunk texts used as context",
+        min_length=1,
+    )
+    reference: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional ground-truth answer. When provided, also computes "
+            "ContextPrecision and ContextRecall."
+        ),
+    )
+
+
+class RAGASScores(BaseModel):
+    """RAGAS evaluation scores. None = metric not computed."""
+    faithfulness: Optional[float] = Field(
+        default=None,
+        description="0-1. Is the answer grounded in the retrieved context?",
+    )
+    answer_relevancy: Optional[float] = Field(
+        default=None,
+        description="0-1. Does the answer address the question?",
+    )
+    context_precision: Optional[float] = Field(
+        default=None,
+        description="0-1. Fraction of retrieved context that is relevant (needs reference).",
+    )
+    context_recall: Optional[float] = Field(
+        default=None,
+        description="0-1. Fraction of required info that was retrieved (needs reference).",
+    )
+
+
+class RAGASEvaluationResponse(BaseModel):
+    """Single RAGAS evaluation result."""
+    id: str
+    question: str
+    answer: str
+    scores: RAGASScores
+    model_used: str
+    evaluated_at: datetime
+    has_reference: bool = False
+
+
+class RAGASHistoryResponse(BaseModel):
+    """RAGAS evaluation history with rolling averages."""
+    evaluations: List[RAGASEvaluationResponse]
+    total: int
+    averages: RAGASScores
+

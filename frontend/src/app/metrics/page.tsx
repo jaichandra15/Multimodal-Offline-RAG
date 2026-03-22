@@ -217,21 +217,24 @@ export default function MetricsPage() {
   const totalChunks = health?.knowledge_base.chunks    ?? 0;
   const avgChunksPerDoc = totalDocs > 0 ? (totalChunks / totalDocs).toFixed(1) : "0";
 
-  const avgSearchLatency = prometheusMetrics
-    ? prometheusMetrics.search_latency.reduce(
-        (acc, s) => acc + (s.count > 0 ? s.sum / s.count : 0), 0
-      ) / (prometheusMetrics.search_latency.length || 1)
-    : 0;
+  // null = no Prometheus data yet (distinct from a real 0 measurement)
+  const avgSearchLatency: number | null = prometheusMetrics
+    ? (() => {
+        const withData = prometheusMetrics.search_latency.filter((s) => s.count > 0);
+        if (withData.length === 0) return null;
+        return withData.reduce((acc, s) => acc + s.sum / s.count, 0) / withData.length;
+      })()
+    : null;
 
-  const avgGenerationLatency = prometheusMetrics
+  const avgGenerationLatency: number | null = prometheusMetrics
     ? (prometheusMetrics.generation_latency.count > 0
         ? prometheusMetrics.generation_latency.sum / prometheusMetrics.generation_latency.count
-        : 0)
-    : 0;
+        : null)
+    : null;
 
   const totalRequests = prometheusMetrics
     ? prometheusMetrics.requests.reduce((acc, r) => acc + r.count, 0)
-    : 0;
+    : null;
 
   const COLORS = ["#8b5cf6", "#06b6d4", "#f59e0b", "#ef4444", "#10b981"];
 
@@ -312,15 +315,19 @@ export default function MetricsPage() {
           <StatCard
             icon={TrendingUp}
             label="Total Requests"
-            value={totalRequests}
-            sub={`${prometheusMetrics?.requests.find(r => r.status === "success")?.count ?? 0} successful`}
+            value={totalRequests ?? "N/A"}
+            sub={
+              totalRequests != null
+                ? `${prometheusMetrics?.requests.find((r) => r.status === "success")?.count ?? 0} successful`
+                : "no data yet"
+            }
             color="sky"
           />
           <StatCard
             icon={Zap}
             label="Avg Search Time"
-            value={`${avgSearchLatency.toFixed(2)}s`}
-            sub="per query"
+            value={avgSearchLatency != null ? `${avgSearchLatency.toFixed(2)}s` : "N/A"}
+            sub={avgSearchLatency != null ? "per query" : "send a query to measure"}
             color="amber"
           />
         </div>
@@ -515,22 +522,28 @@ export default function MetricsPage() {
                   <CardDescription className="text-xs">Total & average seconds for LLM responses</CardDescription>
                 </CardHeader>
                 <CardContent className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart
-                      data={[
-                        { name: "Total", value: prometheusMetrics?.generation_latency.sum ?? 0 },
-                        { name: "Average", value: +avgGenerationLatency.toFixed(3) },
-                      ]}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} unit="s" />
-                      <Tooltip
-                        contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
-                      />
-                      <Area type="monotone" dataKey="value" stroke={COLORS[1]} fill={COLORS[1]} fillOpacity={0.25} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {avgGenerationLatency != null ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart
+                        data={[
+                          { name: "Total", value: prometheusMetrics?.generation_latency.sum ?? 0 },
+                          { name: "Average", value: +avgGenerationLatency.toFixed(3) },
+                        ]}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                        <YAxis tick={{ fontSize: 11 }} unit="s" />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                        />
+                        <Area type="monotone" dataKey="value" stroke={COLORS[1]} fill={COLORS[1]} fillOpacity={0.25} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                      No generation data yet — send a chat message first
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -542,11 +555,9 @@ export default function MetricsPage() {
                 </CardHeader>
                 <CardContent className="h-64 flex flex-col items-center justify-center gap-2">
                   <div className="text-7xl font-bold bg-gradient-to-br from-violet-600 to-indigo-600 bg-clip-text text-transparent">
-                    {prometheusMetrics
-                      ? prometheusMetrics.chunks_retrieved.count > 0
-                        ? (prometheusMetrics.chunks_retrieved.sum / prometheusMetrics.chunks_retrieved.count).toFixed(1)
-                        : "0.0"
-                      : "—"}
+                    {prometheusMetrics && prometheusMetrics.chunks_retrieved.count > 0
+                      ? (prometheusMetrics.chunks_retrieved.sum / prometheusMetrics.chunks_retrieved.count).toFixed(1)
+                      : "N/A"}
                   </div>
                   <p className="text-sm text-muted-foreground">avg chunks per search</p>
                   {prometheusMetrics && (

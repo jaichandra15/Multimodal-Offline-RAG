@@ -23,7 +23,7 @@ class RAGEngine:
     def __init__(self):
         """Initialize RAG engine."""
         self.ollama = ollama_client
-        self.max_context_length = 3000
+        self.max_context_length = 6000   # ↑ from 3000 — gives model more context
         self.use_hybrid_search = settings.use_hybrid_search
         self.use_reranker = settings.reranker_enabled
         self._reranker = None  # Lazy load reranker
@@ -40,6 +40,27 @@ class RAGEngine:
                 self.use_reranker = False
         return self._reranker
     
+    def _format_context(self, search_results) -> str:
+        """
+        Format retrieved chunks into a clean, clearly-delimited context block.
+        Each source gets a numbered header so the model can cite them easily.
+        """
+        if not search_results:
+            return "No relevant information was found in the knowledge base."
+
+        parts = []
+        for i, result in enumerate(search_results, 1):
+            parts.append(
+                f"--- Source {i}: {result.document_title} ---\n"
+                f"{result.content.strip()}"
+            )
+        raw = "\n\n".join(parts)
+
+        # Truncate if necessary
+        if len(raw) > self.max_context_length:
+            raw = raw[: self.max_context_length] + "\n\n...[context truncated]..."
+        return raw
+
     def _build_prompt(
         self,
         user_query: str,
@@ -47,32 +68,55 @@ class RAGEngine:
         conversation_history: Optional[List[Dict[str, str]]] = None
     ) -> str:
         """
-        Build prompt for Ollama with context and query.
-        
-        Args:
-            user_query: User's question
-            context: Retrieved context from knowledge base
-            conversation_history: Optional conversation history
-            
-        Returns:
-            Formatted prompt
+        Build a well-structured prompt for Ollama with:
+        - A detailed system persona with formatting rules
+        - Optional conversation history for memory
+        - The retrieved context, clearly delimited
+        - The user question
         """
-        # Truncate context if too long
-        if len(context) > self.max_context_length:
-            context = context[:self.max_context_length] + "\n...(context truncated)"
-        
-        prompt = f"""You are a helpful AI assistant. Use the following context to answer the user's question. 
-Synthesize the information into a clear, natural answer. DO NOT just list the sources - provide a coherent response.
+        # ── System instructions ────────────────────────────────────────────────
+        system = """You are an expert AI assistant with access to a knowledge base.
 
-Context from knowledge base:
+FORMATTING RULES (follow these strictly):
+- Use **Markdown** formatting in every response.
+- Structure your answer with a short **introductory sentence**, then use:
+  - `##` headers to separate distinct topics if the answer covers multiple areas
+  - Bullet points (`-`) or numbered lists for enumerations, steps, or comparisons
+  - `**bold**` for key terms and important facts
+  - Code blocks (``` ```) for any code, commands, or technical syntax
+- Keep each bullet point concise — one idea per bullet.
+- After the main answer, add a **Summary** section (1–2 sentences) only if the response is long.
+- Do NOT write long unbroken paragraphs. Break text up.
+- If the knowledge base does not contain enough information to answer fully, say so clearly.
+- Do NOT fabricate information not present in the provided sources."""
+
+        # ── Conversation history (for multi-turn memory) ───────────────────────
+        history_block = ""
+        if conversation_history:
+            history_lines = []
+            # Only include last 6 turns to avoid prompt bloat
+            for msg in conversation_history[-6:]:
+                role_label = "User" if msg["role"] == "user" else "Assistant"
+                history_lines.append(f"{role_label}: {msg['content']}")
+            history_block = (
+                "\n\n--- Conversation History ---\n"
+                + "\n".join(history_lines)
+                + "\n--- End of History ---"
+            )
+
+        # ── Final prompt assembly ──────────────────────────────────────────────
+        prompt = f"""{system}{history_block}
+
+--- Knowledge Base Context ---
 {context}
+--- End of Context ---
 
 User Question: {user_query}
 
-Your Answer (synthesize the information above into a clear response):"""
-        
+Answer (use Markdown formatting as instructed above):"""
+
         return prompt
-    
+
     async def search(
         self,
         session: AsyncSession,
@@ -173,31 +217,23 @@ Your Answer (synthesize the information above into a clear response):"""
         """
         # Search knowledge base
         search_results = await self.search(session, query)
-        
-        # Format context
-        if not search_results:
-            context = "No relevant information found in the knowledge base."
-        else:
-            context_parts = []
-            for i, result in enumerate(search_results, 1):
-                context_parts.append(
-                    f"[Source {i}: {result.document_title}]\n{result.content}"
-                )
-            context = "\n\n".join(context_parts)
-        
+
+        # Format context using the shared helper
+        context = self._format_context(search_results)
+
         # Build prompt
         prompt = self._build_prompt(query, context, conversation_history)
-        
+
         # Generate response
         logger.info("Generating response...")
         start_time = time.time()
         answer = await self.ollama.generate_chat_completion(prompt)
         generation_duration = time.time() - start_time
-        
+
         # Record metrics
         metrics.rag_generation_latency.labels(model=settings.ollama_llm_model).observe(generation_duration)
         logger.info(f"Generated response in {generation_duration:.2f}s")
-        
+
         return answer
     
     async def generate_answer_stream(
@@ -219,27 +255,19 @@ Your Answer (synthesize the information above into a clear response):"""
         """
         # Search knowledge base
         search_results = await self.search(session, query)
-        
-        # Format context
-        if not search_results:
-            context = "No relevant information found in the knowledge base."
-        else:
-            context_parts = []
-            for i, result in enumerate(search_results, 1):
-                context_parts.append(
-                    f"[Source {i}: {result.document_title}]\n{result.content}"
-                )
-            context = "\n\n".join(context_parts)
-        
+
+        # Format context using the shared helper
+        context = self._format_context(search_results)
+
         # Build prompt
         prompt = self._build_prompt(query, context, conversation_history)
-        
+
         # Stream response with timing
         logger.info("Streaming response...")
         start_time = time.time()
         async for chunk in self.ollama.generate_chat_completion_stream(prompt):
             yield chunk
-        
+
         # Record generation metrics
         generation_duration = time.time() - start_time
         metrics.rag_generation_latency.labels(model=settings.ollama_llm_model).observe(generation_duration)
