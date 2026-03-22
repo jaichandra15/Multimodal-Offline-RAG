@@ -679,10 +679,149 @@ export default function MetricsPage() {
               </div>
             )}
           </TabsContent>
-        </Tabs>
 
-          {/* ── RAGAS Quality tab ─────────────────────────────────────────── */}
-          <Tabs defaultValue="knowledge" className="mt-0">{/* wrapper closed above */}</Tabs>
+          {/* ── RAGAS Quality tab ──────────────────────────────────────────── */}
+          <TabsContent value="ragas" className="space-y-4">
+            <div className="flex items-start gap-3 p-4 rounded-xl bg-violet-500/10 border border-violet-500/20 text-sm">
+              <ShieldCheck className="h-4 w-4 text-violet-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-medium text-violet-600 dark:text-violet-400">RAGAS Auto-Evaluation</p>
+                <p className="text-muted-foreground text-xs mt-0.5">
+                  Scores are computed automatically in the background after each chat response using Ollama as judge. Allow 15–60 s per query.
+                </p>
+              </div>
+            </div>
+
+            {ragasHistory && ragasHistory.total > 0 ? (
+              <>
+                {/* 4 score cards */}
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {([
+                    { label: "Faithfulness",      value: ragasHistory.averages.faithfulness,      desc: "Answer grounded in context" },
+                    { label: "Answer Relevancy",  value: ragasHistory.averages.answer_relevancy,  desc: "Answer addresses question" },
+                    { label: "Context Precision", value: ragasHistory.averages.context_precision, desc: "Needs ground truth" },
+                    { label: "Context Recall",    value: ragasHistory.averages.context_recall,    desc: "Needs ground truth" },
+                  ]).map(({ label, value, desc }) => {
+                    const pct = value != null ? Math.round(value * 100) : null;
+                    const quality = pct == null ? "nodata" : pct >= 75 ? "good" : pct >= 50 ? "ok" : "poor";
+                    const bar  = { good: "bg-emerald-500", ok: "bg-amber-500", poor: "bg-red-500", nodata: "bg-muted-foreground/20" }[quality];
+                    const txt  = { good: "text-emerald-500", ok: "text-amber-500", poor: "text-red-500", nodata: "text-muted-foreground" }[quality];
+                    return (
+                      <Card key={label} className="border border-border/60 bg-card/60 backdrop-blur">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-3xl font-bold tracking-tight">{pct != null ? `${pct}%` : "N/A"}</div>
+                          <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${bar}`} style={{ width: pct != null ? `${pct}%` : "0%" }} />
+                          </div>
+                          <p className={`text-xs mt-1.5 font-medium ${txt}`}>
+                            {quality === "nodata" ? desc : `${quality.toUpperCase()} • ${desc}`}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                {/* Score trend */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Score Trend</CardTitle>
+                    <CardDescription className="text-xs">Faithfulness &amp; Answer Relevancy over last {ragasHistory.total} evals</CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={[...ragasHistory.evaluations].reverse().map((e, i) => ({
+                        idx: i + 1,
+                        faith: e.scores.faithfulness != null ? +(e.scores.faithfulness * 100).toFixed(1) : null,
+                        rel:   e.scores.answer_relevancy != null ? +(e.scores.answer_relevancy * 100).toFixed(1) : null,
+                        label: new Date(e.evaluated_at).toLocaleTimeString(),
+                      }))}>
+                        <defs>
+                          <linearGradient id="gF2" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%"  stopColor="#8b5cf6" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="gA2" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%"  stopColor="#06b6d4" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} />
+                        <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} unit="%" />
+                        <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} formatter={(v: any) => [`${v}%`]} />
+                        <Legend />
+                        <Area type="monotone" dataKey="faith" name="Faithfulness"    stroke="#8b5cf6" fill="url(#gF2)" connectNulls />
+                        <Area type="monotone" dataKey="rel"   name="Answer Relevancy" stroke="#06b6d4" fill="url(#gA2)" connectNulls />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Query table */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Evaluated Queries</CardTitle>
+                    <CardDescription className="text-xs">Most recent {ragasHistory.total} (newest first)</CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <ScrollArea className="h-80">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/70 backdrop-blur">
+                          <tr>
+                            <th className="text-left px-4 py-2 font-medium text-muted-foreground">Question</th>
+                            <th className="text-center px-3 py-2 font-medium text-muted-foreground">Faith.</th>
+                            <th className="text-center px-3 py-2 font-medium text-muted-foreground">Relevancy</th>
+                            <th className="text-center px-3 py-2 font-medium text-muted-foreground">Prec.</th>
+                            <th className="text-center px-3 py-2 font-medium text-muted-foreground">Recall</th>
+                            <th className="text-right px-4 py-2 font-medium text-muted-foreground">Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ragasHistory.evaluations.map((ev, i) => {
+                            const fmt = (v: number | null) =>
+                              v != null
+                                ? <span className={`font-mono font-semibold ${v >= 0.75 ? "text-emerald-500" : v >= 0.5 ? "text-amber-500" : "text-red-500"}`}>{(v * 100).toFixed(0)}%</span>
+                                : <span className="text-muted-foreground/40">—</span>;
+                            return (
+                              <tr key={ev.id} className={`border-t border-border/40 ${i % 2 === 0 ? "bg-background" : "bg-muted/20"}`}>
+                                <td className="px-4 py-2.5 max-w-[220px]">
+                                  <p className="truncate text-muted-foreground" title={ev.question}>{ev.question}</p>
+                                </td>
+                                <td className="text-center px-3 py-2.5">{fmt(ev.scores.faithfulness)}</td>
+                                <td className="text-center px-3 py-2.5">{fmt(ev.scores.answer_relevancy)}</td>
+                                <td className="text-center px-3 py-2.5">{fmt(ev.scores.context_precision)}</td>
+                                <td className="text-center px-3 py-2.5">{fmt(ev.scores.context_recall)}</td>
+                                <td className="text-right px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                                  {new Date(ev.evaluated_at).toLocaleTimeString()}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center h-48 gap-3 text-center">
+                  <ShieldCheck className="h-10 w-10 text-muted-foreground/30" />
+                  <div>
+                    <p className="text-sm font-medium">No evaluations yet</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Send a few chat messages — RAGAS scores each one automatically in the background.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
