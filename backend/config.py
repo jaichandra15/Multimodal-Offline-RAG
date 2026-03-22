@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     db_command_timeout: int = 60
     
     # Ollama Configuration
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://ollama:11434"
     ollama_llm_model: str = "mistral"
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_timeout: int = 300  

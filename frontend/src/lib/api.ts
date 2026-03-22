@@ -13,7 +13,7 @@ import type {
   Citation,
 } from './types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://8000-01kjftqgyazawrg2zrdhsgqpp2.cloudspaces.litng.ai' ;
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://8000-01kjftqgyazawrg2zrdhsgqpp2.cloudspaces.litng.ai/' ;
 
 class APIError extends Error {
   constructor(
@@ -83,10 +83,14 @@ export const api = {
 
       let fullResponse = '';
       let citations: Citation[] = [];
+      let completed = false;
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          onComplete?.(fullResponse, citations);   // ✅ ADD THIS
+          break;
+        }
 
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
@@ -117,6 +121,7 @@ export const api = {
           }
 
           if (parsed.status === 'done') {
+            completed=true,
             onComplete?.(fullResponse, citations);
           }
 

@@ -22,16 +22,15 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 # ── Copy dependency manifests first (layer cache friendly) ────────────────
+# Copy dependency manifests
 COPY pyproject.toml ./
 
-# ── Install Python dependencies ────────────────────────────────────────────
-# PyTorch's CPU wheels are enough for Lightning AI GPU nodes
-# because Torch auto-detects CUDA at runtime via the host drivers.
-RUN uv pip install --system --no-cache -e .
-
-# ── Copy application source ────────────────────────────────────────────────
+# Copy source BEFORE install
 COPY backend ./backend
 COPY documents ./documents
+
+# Now install
+RUN uv pip install --system --no-cache -e .
 
 # ── Runtime env ────────────────────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1

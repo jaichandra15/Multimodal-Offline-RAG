@@ -341,17 +341,22 @@ export function ChatInterface() {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
-
+  
     const userMsg = { role: 'user' as const, content: text };
     addMessage(userMsg);
     setInput('');
     setIsStreaming(true);
-
-    if (useStreaming) {
-      setStreamingText('');
-      setStreamingCitations([]);
-
-      try {
+  
+    const timeout = setTimeout(() => {
+      console.warn("Force reset streaming");
+      setIsStreaming(false);
+    }, 30000); // 30s safety
+  
+    try {
+      if (useStreaming) {
+        setStreamingText('');
+        setStreamingCitations([]);
+  
         await api.chatStream(
           { message: userMsg.content, conversation_history: messages },
           (chunk) => setStreamingText((prev) => prev + chunk),
@@ -369,23 +374,17 @@ export function ChatInterface() {
           },
           (citations) => setStreamingCitations(citations),
         );
-      } catch {
-        setStreamingText('');
-        setStreamingCitations([]);
-        setIsStreaming(false);
-      }
-    } else {
-      try {
+      } else {
         const resp = await api.chat({ message: userMsg.content, conversation_history: messages });
         addMessage({ role: 'assistant', content: resp.response, citations: resp.citations });
-      } catch (err: any) {
-        toast.error(`Failed to send message: ${err.message}`);
-      } finally {
-        setIsStreaming(false);
       }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      clearTimeout(timeout);
+      setIsStreaming(false);   // 🔥 GUARANTEED RESET
     }
   }, [input, isStreaming, messages, useStreaming, addMessage, setIsStreaming]);
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
