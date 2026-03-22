@@ -1,41 +1,46 @@
-# Dockerfile for RAG Backend - Works on both CPU and GPU systems
-FROM python:3.9-slim
+# ─────────────────────────────────────────────────────────────────────────────
+# RAG Backend Dockerfile
+#
+# Optimised for Lightning AI (CPU + GPU compatible)
+# Python 3.11-slim · uv for fast dependency installs
+# ─────────────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# ── System dependencies ────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
     gcc \
-    postgresql-client \
+    g++ \
     libpq-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Install UV package manager
+# ── Install uv (fast Python package manager) ──────────────────────────────
 RUN pip install --no-cache-dir uv
 
-# Copy project files
+# ── Copy dependency manifests first (layer cache friendly) ────────────────
 COPY pyproject.toml ./
+
+# ── Install Python dependencies ────────────────────────────────────────────
+# PyTorch's CPU wheels are enough for Lightning AI GPU nodes
+# because Torch auto-detects CUDA at runtime via the host drivers.
+RUN uv pip install --system --no-cache -e .
+
+# ── Copy application source ────────────────────────────────────────────────
 COPY backend ./backend
 COPY documents ./documents
 
-# Install Python dependencies
-# PyTorch will auto-detect GPU/CPU at runtime
-RUN uv pip install --system -e .
-
-# Set environment variables
+# ── Runtime env ────────────────────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Expose API port
 EXPOSE 8000
 
-# Health check for FastAPI
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# ── Health check (generous start-period for model loading) ─────────────────
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -sf http://localhost:8000/health || exit 1
 
-# Run the backend
 CMD ["python", "-m", "backend.main"]

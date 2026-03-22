@@ -1,0 +1,46 @@
+# ── Version Control ───────────────────────────────────────────────────────────
+.git
+.gitignore
+
+# ── Python runtime artefacts (rebuilt inside container) ───────────────────────
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# ── UV / pip caches ───────────────────────────────────────────────────────────
+uv.lock
+.uv/
+
+# ── Secrets / local config ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Docs / misc ───────────────────────────────────────────────────────────────
+*.md
+*.log
+logs/
+ideal_documents/
+PRPs/
+
+# ── Frontend (has its own Dockerfile) ────────────────────────────────────────
+frontend/

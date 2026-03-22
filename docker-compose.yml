@@ -1,25 +1,39 @@
-version: "3.8"
+# ─────────────────────────────────────────────────────────────────────────────
+# Multimodal Offline RAG — Docker Compose
+#
+# Quick start:
+#   cp .env.example .env        ← set NEXT_PUBLIC_API_URL to your Lightning URL
+#   docker compose up -d        ← start everything
+#   docker compose exec ollama ollama pull phi3:mini
+#   docker compose exec ollama ollama pull nomic-embed-text
+#
+# Or use the Makefile:  make start | make stop | make ingest | make logs
+# ─────────────────────────────────────────────────────────────────────────────
 
 services:
-  # PostgreSQL with PGVector
+
+  # ── PostgreSQL + pgvector ──────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg15
+    image: pgvector/pgvector:pg16
     container_name: rag_postgres
+    env_file: .env
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: offrag
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-offrag}
     ports:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-offrag}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
 
-  # Ollama (NEW)
+  # ── Ollama (LLM + Embeddings) ──────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
     container_name: rag_ollama
@@ -27,9 +41,38 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
-  # FastAPI Backend
+  # ── Model puller (runs once, pulls required models, then exits) ────────────
+  # This ensures phi3:mini and nomic-embed-text are ready before the backend starts.
+  model-puller:
+    image: ollama/ollama:latest
+    container_name: rag_model_puller
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Pulling LLM model: ${OLLAMA_LLM_MODEL:-phi3:mini}..."
+        ollama pull ${OLLAMA_LLM_MODEL:-phi3:mini}
+        echo "Pulling embedding model: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}..."
+        ollama pull ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+        echo "Models ready."
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    env_file: .env
+    restart: "no"
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
   backend:
     build:
       context: .
@@ -39,35 +82,41 @@ services:
       postgres:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
+      model-puller:
+        condition: service_completed_successfully
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/offrag
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_LLM_MODEL: phi3:mini
-      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
-      LOG_LEVEL: INFO
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/offrag}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-phi3:mini}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
-    command: ["python", "-m", "backend.main"]
+      - ./documents:/app/documents   # mount documents folder for ingestion
     restart: unless-stopped
 
-  # Next.js Frontend
+  # ── Next.js Frontend ───────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Pass at build time so it's baked into the Next.js bundle
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     container_name: rag_frontend
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: https://8000-01kjftqgyazawrg2zrdhsgqpp2.cloudspaces.litng.ai
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     restart: unless-stopped
 
-  # Document Ingestion (run manually)
+  # ── Document Ingestion (run on-demand via: make ingest) ───────────────────
   ingestion:
     build:
       context: .
@@ -77,17 +126,24 @@ services:
       postgres:
         condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
+    env_file: .env
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/offrag
-      OLLAMA_BASE_URL: http://rag_ollama:11434
-      OLLAMA_LLM_MODEL: phi3:mini
-      OLLAMA_EMBEDDING_MODEL: nomic-embed-text
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/offrag}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-phi3:mini}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
     volumes:
-      - .:/app
-    command: ["python", "-m", "backend.ingestion.pipeline", "--documents", "documents"]
+      - ./documents:/app/documents
+    command:
+      - python
+      - -m
+      - backend.ingestion.pipeline
+      - --documents
+      - documents
     profiles:
       - ingestion
+    restart: "no"
 
 volumes:
   postgres_data:
