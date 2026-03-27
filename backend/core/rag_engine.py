@@ -198,6 +198,115 @@ Answer (use Markdown formatting as instructed above):"""
         logger.info(f"Found {len(results)} relevant chunks in {search_duration:.2f}s")
         return results
     
+    async def search_detailed(
+        self,
+        session: AsyncSession,
+        query: str,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search with full pipeline trace for real-time visualization.
+        
+        Returns dict with keys:
+          results     — final SearchResult list (same as search())
+          trace       — dict describing the retrieval pipeline
+        """
+        t0 = time.time()
+        
+        # 1. Embed
+        t_embed = time.time()
+        query_embedding = await self.ollama.generate_embedding(query)
+        embed_ms = round((time.time() - t_embed) * 1000, 1)
+        
+        # 2. Retrieve
+        should_hybrid = self.use_hybrid_search
+        search_method = "hybrid" if should_hybrid else "vector"
+        fetch_limit = limit or settings.top_k_results
+        if self.use_reranker and settings.reranker_top_k > fetch_limit:
+            fetch_limit = settings.reranker_top_k
+        
+        t_retrieval = time.time()
+        if should_hybrid:
+            raw_results = await hybrid_search(
+                session, query=query, query_embedding=query_embedding, limit=fetch_limit
+            )
+        else:
+            raw_results = await vector_search(
+                session, query_embedding, limit=fetch_limit
+            )
+        retrieval_ms = round((time.time() - t_retrieval) * 1000, 1)
+        
+        # Snapshot pre-rerank
+        pre_rerank = [
+            {
+                "rank": i + 1,
+                "chunk_id": str(r.chunk_id),
+                "doc_title": r.document_title,
+                "preview": r.content[:180],
+                "score": round(r.similarity, 4),
+            }
+            for i, r in enumerate(raw_results)
+        ]
+        
+        # 3. Rerank
+        reranked = False
+        rerank_model = None
+        rerank_ms = None
+        final = raw_results
+        
+        if self.use_reranker and raw_results:
+            try:
+                reranker = self._get_reranker()
+                if reranker:
+                    rerank_model = settings.reranker_model
+                    t_rr = time.time()
+                    final_limit = limit or settings.top_k_results
+                    final = reranker.rerank(query, raw_results, top_k=final_limit)
+                    rerank_ms = round((time.time() - t_rr) * 1000, 1)
+                    reranked = True
+                    metrics.reranker_calls_total.labels(status="success").inc()
+            except Exception as e:
+                logger.error(f"Reranking failed in detailed search: {e}")
+                metrics.reranker_calls_total.labels(status="error").inc()
+        
+        if not reranked and limit and len(final) > limit:
+            final = final[:limit]
+        
+        # Snapshot post-rerank
+        post_rerank = [
+            {
+                "rank": i + 1,
+                "chunk_id": str(r.chunk_id),
+                "doc_title": r.document_title,
+                "preview": r.content[:180],
+                "score": round(r.similarity, 4),
+            }
+            for i, r in enumerate(final)
+        ]
+        
+        total_ms = round((time.time() - t0) * 1000, 1)
+        
+        # Record metrics
+        metrics.rag_search_latency.labels(method=search_method).observe(total_ms / 1000)
+        metrics.rag_chunks_retrieved.observe(len(final))
+        
+        return {
+            "results": final,
+            "trace": {
+                "search_method": search_method,
+                "embed_ms": embed_ms,
+                "retrieval_ms": retrieval_ms,
+                "reranked": reranked,
+                "rerank_model": rerank_model,
+                "rerank_ms": rerank_ms,
+                "candidates_fetched": len(pre_rerank),
+                "final_count": len(post_rerank),
+                "total_ms": total_ms,
+                "pre_rerank": pre_rerank,
+                "post_rerank": post_rerank,
+            },
+        }
+    
     async def generate_answer(
         self,
         session: AsyncSession,

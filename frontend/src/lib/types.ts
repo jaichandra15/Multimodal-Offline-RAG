@@ -97,3 +97,26 @@ export interface IngestionResponse {
   chunks_created: number;
   errors: string[];
 }
+
+// ── Retrieval pipeline trace ───────────────────────────────────────────────
+export interface RetrievalChunkTrace {
+  rank: number;
+  chunk_id: string;
+  doc_title: string;
+  preview: string;
+  score: number;
+}
+
+export interface RetrievalTrace {
+  search_method: string;
+  embed_ms: number;
+  retrieval_ms: number;
+  reranked: boolean;
+  rerank_model: string | null;
+  rerank_ms: number | null;
+  candidates_fetched: number;
+  final_count: number;
+  total_ms: number;
+  pre_rerank: RetrievalChunkTrace[];
+  post_rerank: RetrievalChunkTrace[];
+}

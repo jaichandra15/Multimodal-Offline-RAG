@@ -1,5 +1,3 @@
-// API Client for RAG Backend
-
 import type {
   ChatRequest,
   ChatResponse,
@@ -11,6 +9,7 @@ import type {
   IngestionRequest,
   IngestionResponse,
   Citation,
+  RetrievalTrace,
 } from './types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://8000-01kjftqgyazawrg2zrdhsgqpp2.cloudspaces.litng.ai/' ;
@@ -61,7 +60,8 @@ export const api = {
     onChunk: (chunk: string) => void,
     onComplete?: (fullResponse: string, citations: Citation[]) => void,
     onError?: (error: Error) => void,
-    onCitations?: (citations: Citation[]) => void
+    onCitations?: (citations: Citation[]) => void,
+    onTrace?: (trace: RetrievalTrace) => void,
   ): Promise<void> {
     try {
       const response = await fetch(`${API_URL}/chat/stream`, {
@@ -121,6 +121,10 @@ export const api = {
           if (parsed.citations) {
             citations = parsed.citations;
             onCitations?.(citations);
+          }
+
+          if (parsed.status === 'retrieval_trace' && parsed.trace) {
+            onTrace?.(parsed.trace as RetrievalTrace);
           }
 
           if (parsed.status === 'done') {

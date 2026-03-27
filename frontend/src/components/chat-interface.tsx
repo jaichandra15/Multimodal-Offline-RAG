@@ -25,6 +25,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Bot,
+  Layers,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -41,7 +42,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
-import type { Citation } from '@/lib/types';
+import type { Citation, RetrievalTrace } from '@/lib/types';
+import { RetrievalPipelinePanel } from '@/components/retrieval-panel';
 
 // ─── Typing Indicator ────────────────────────────────────────────────────────
 function TypingIndicator() {
@@ -256,6 +258,8 @@ export function ChatInterface() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [retrievalTrace, setRetrievalTrace] = useState<RetrievalTrace | null>(null);
+  const [showPipeline, setShowPipeline] = useState(false);
 
   const {
     conversations,
@@ -356,6 +360,7 @@ export function ChatInterface() {
       if (useStreaming) {
         setStreamingText('');
         setStreamingCitations([]);
+        setRetrievalTrace(null);
   
         await api.chatStream(
           { message: userMsg.content, conversation_history: messages },
@@ -373,6 +378,10 @@ export function ChatInterface() {
             setIsStreaming(false);
           },
           (citations) => setStreamingCitations(citations),
+          (trace) => {
+            setRetrievalTrace(trace);
+            setShowPipeline(true);
+          },
         );
       } else {
         const resp = await api.chat({ message: userMsg.content, conversation_history: messages });
@@ -557,6 +566,23 @@ export function ChatInterface() {
               </p>
               <p className="text-[11px] text-muted-foreground">Powered by Ollama</p>
             </div>
+
+            {/* Pipeline trace button */}
+            {retrievalTrace && (
+              <Button
+                variant={showPipeline ? 'default' : 'outline'}
+                size="sm"
+                className={`gap-2 h-8 text-xs ${
+                  showPipeline
+                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border-0'
+                    : ''
+                }`}
+                onClick={() => setShowPipeline((v) => !v)}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Pipeline
+              </Button>
+            )}
 
             {/* Knowledge base button */}
             <Button
@@ -778,6 +804,13 @@ export function ChatInterface() {
         onClose={() => setShowDocs(false)}
         documents={docsData?.documents ?? []}
         loading={docsLoading}
+      />
+
+      {/* ─── Retrieval Pipeline Panel (floating) ──────────────────────────── */}
+      <RetrievalPipelinePanel
+        trace={retrievalTrace}
+        visible={showPipeline}
+        onClose={() => setShowPipeline(false)}
       />
     </div>
   );

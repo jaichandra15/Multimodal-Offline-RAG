@@ -234,9 +234,13 @@ async def chat_stream(
                     for msg in request.conversation_history
                 ]
             
-            # Search knowledge base for citations
+            # Search knowledge base with full pipeline trace
             yield f"data: {json.dumps({'status': 'searching'})}\n\n"
-            search_results = await rag_engine.search(session, request.message)
+            detailed = await rag_engine.search_detailed(session, request.message)
+            search_results = detailed["results"]
+            
+            # Emit retrieval trace (pre/post rerank, timing breakdown)
+            yield f"data: {json.dumps({'status': 'retrieval_trace', 'trace': detailed['trace']})}\n\n"
             
             # Build citations
             citations = []
