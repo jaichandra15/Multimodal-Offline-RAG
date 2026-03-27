@@ -155,6 +155,18 @@ async def chat(
             "citations_count": len(citations)
         })
         
+        # Fire-and-forget RAGAS background evaluation
+        context_texts = [cit["content"] for cit in result.get("citations", []) if isinstance(cit, dict) and cit.get("content")]
+        if context_texts and result["response"]:
+            asyncio.create_task(
+                background_ragas_evaluate(
+                    question=request.message,
+                    answer=result["response"],
+                    contexts=context_texts,
+                    session_factory=db_manager.get_session,
+                )
+            )
+        
         return ChatResponse(
             response=result["response"],
             conversation_history=updated_history,
@@ -261,6 +273,18 @@ async def chat_stream(
             # Record success metric
             if METRICS_AVAILABLE:
                 metrics.rag_requests_total.labels(status="success").inc()
+            
+            # Fire-and-forget RAGAS evaluation in the background
+            context_texts = [c["content"] for c in citations if c.get("content")]
+            if context_texts and full_response:
+                asyncio.create_task(
+                    background_ragas_evaluate(
+                        question=request.message,
+                        answer=full_response,
+                        contexts=context_texts,
+                        session_factory=db_manager.get_session,
+                    )
+                )
             
         except Exception as e:
             if METRICS_AVAILABLE:
