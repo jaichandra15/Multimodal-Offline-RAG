@@ -59,8 +59,8 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Pulling LLM model: ${OLLAMA_LLM_MODEL:-phi3:mini}..."
-        ollama pull ${OLLAMA_LLM_MODEL:-phi3:mini}
+        echo "Pulling LLM model: ${OLLAMA_LLM_MODEL:-mistral:7b-instruct}..."
+        ollama pull ${OLLAMA_LLM_MODEL:-mistral:7b-instruct}
         echo "Pulling embedding model: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}..."
         ollama pull ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
         echo "Models ready."
@@ -86,7 +86,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/offrag}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-phi3:mini}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-mistral:7b-instruct}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
       OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-300}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
