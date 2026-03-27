@@ -5,6 +5,7 @@
 #   make setup      — copy .env.example → .env  (first time only)
 #   make start      — start all services (CPU)
 #   make start-gpu  — start all services (GPU / Lightning AI)
+#   make start-git-gpu - pull latest code and start all services with GPU
 #   make stop       — stop all services
 #   make restart    — restart all services
 #   make ingest     — ingest documents from ./documents folder
@@ -41,6 +42,15 @@ start: _check_env
 	@echo "    Ollama    → http://localhost:11434"
 	@echo ""
 	@echo "    Run 'make logs' to follow logs"
+
+start-git-gpu:_check_env
+	@echo "🚀  Starting RAG stack (GPU)..."
+	git pull
+	$(COMPOSE_GPU) up -d --build
+	@echo ""
+	@echo "✅  Services started (GPU mode)"
+	@echo "    Frontend  → http://localhost:3000"
+	@echo "    Backend   → http://localhost:8000"
 
 start-gpu: _check_env
 	@echo "🚀  Starting RAG stack (GPU)..."

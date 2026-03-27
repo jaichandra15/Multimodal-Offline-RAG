@@ -354,7 +354,7 @@ export function ChatInterface() {
     const timeout = setTimeout(() => {
       console.warn("Force reset streaming");
       setIsStreaming(false);
-    }, 30000); // 30s safety
+    }, 50000); // 30s safety
   
     try {
       if (useStreaming) {
