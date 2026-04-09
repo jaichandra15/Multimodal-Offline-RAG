@@ -311,21 +311,26 @@ Answer (use Markdown formatting as instructed above):"""
         self,
         session: AsyncSession,
         query: str,
-        conversation_history: Optional[List[Dict[str, str]]] = None
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        search_results: Optional[List[SearchResult]] = None,
     ) -> str:
         """
         Generate answer to user query using RAG.
-        
+
         Args:
             session: Database session
             query: User's question
             conversation_history: Optional conversation history
-            
+            search_results: Pre-fetched search results. If provided, the search
+                step is skipped entirely — use this to avoid double-searching
+                when the caller already has results (e.g. chat()).
+
         Returns:
             Generated answer
         """
-        # Search knowledge base
-        search_results = await self.search(session, query)
+        # Only search if results were not provided by the caller.
+        if search_results is None:
+            search_results = await self.search(session, query)
 
         # Format context using the shared helper
         context = self._format_context(search_results)
@@ -349,21 +354,26 @@ Answer (use Markdown formatting as instructed above):"""
         self,
         session: AsyncSession,
         query: str,
-        conversation_history: Optional[List[Dict[str, str]]] = None
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        search_results: Optional[List[SearchResult]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Generate answer with streaming.
-        
+
         Args:
             session: Database session
             query: User's question
             conversation_history: Optional conversation history
-            
+            search_results: Pre-fetched search results. If provided, the search
+                step is skipped entirely — avoids double-searching in the
+                streaming route which already calls search_detailed().
+
         Yields:
             Text chunks as they are generated
         """
-        # Search knowledge base
-        search_results = await self.search(session, query)
+        # Only search if results were not provided by the caller.
+        if search_results is None:
+            search_results = await self.search(session, query)
 
         # Format context using the shared helper
         context = self._format_context(search_results)
@@ -390,24 +400,29 @@ Answer (use Markdown formatting as instructed above):"""
     ) -> Dict[str, Any]:
         """
         Complete chat interaction with RAG.
-        
+
         Args:
             session: Database session
             user_query: User's message
             conversation_history: Optional conversation history
-            
+
         Returns:
             Dictionary with response, citations, and updated conversation history
         """
-        # Search knowledge base for citations
+        # Search once — pass results to generate_answer to avoid a second search.
         search_results = await self.search(session, user_query)
-        
-        # Generate answer
-        answer = await self.generate_answer(session, user_query, conversation_history)
-        
+
+        # Generate answer, reusing the results fetched above.
+        answer = await self.generate_answer(
+            session,
+            user_query,
+            conversation_history,
+            search_results=search_results,
+        )
+
         # Record success metric
         metrics.rag_requests_total.labels(status="success").inc()
-        
+
         # Build citations from search results
         citations = []
         for i, result in enumerate(search_results, 1):
@@ -421,15 +436,15 @@ Answer (use Markdown formatting as instructed above):"""
                 "metadata": result.chunk_metadata,
                 "similarity": result.similarity
             })
-        
+
         # Update conversation history
         if conversation_history is None:
             conversation_history = []
-        
+
         updated_history = conversation_history.copy()
         updated_history.append({"role": "user", "content": user_query})
         updated_history.append({"role": "assistant", "content": answer})
-        
+
         return {
             "response": answer,
             "conversation_history": updated_history,

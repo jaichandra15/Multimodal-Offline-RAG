@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.config import settings
 from backend.database.connection import db_manager
 from backend.api.routes import router
+from backend.core.ollama_client import ollama_client
 from backend.core.observability import (
     configure_logging,
     setup_metrics,
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down RAG Backend API...")
         await db_manager.close()
         logger.info("Database connections closed")
+        await ollama_client.close()
 
 
 app = FastAPI(

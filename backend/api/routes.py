@@ -259,14 +259,15 @@ async def chat_stream(
             # Send citations
             yield f"data: {json.dumps({'status': 'citations', 'citations': citations})}\n\n"
             
-            # Stream response
+            # Stream response — pass pre-fetched results to skip a second search.
             yield f"data: {json.dumps({'status': 'generating'})}\n\n"
             
             full_response = ""
             async for chunk in rag_engine.generate_answer_stream(
                 session,
                 request.message,
-                conversation_history
+                conversation_history,
+                search_results=search_results,
             ):
                 full_response += chunk
                 yield f"data: {json.dumps({'chunk': chunk})}\n\n"
