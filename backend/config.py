@@ -45,6 +45,24 @@ class Settings(BaseSettings):
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_top_k: int = 30  # Number of candidates to fetch for reranking
     reranker_batch_size: int = 32  # Batch size for reranker inference
+
+    # ── Multimodal / Image Captioning (BLIP) ─────────────────────────────────
+    # Set IMAGE_CAPTIONING_ENABLED=false to skip image extraction entirely
+    # (useful on low-RAM machines or during fast text-only ingestion).
+    image_captioning_enabled: bool = False
+    # HuggingFace model id for BLIP captioning.
+    # Options (lightest → heaviest):
+    #   Salesforce/blip-image-captioning-base   (~940 MB, ~1 GB RAM)  ← default
+    #   Salesforce/blip-image-captioning-large  (~1.9 GB, ~2.5 GB RAM)
+    #   Salesforce/blip2-opt-2.7b              (~6 GB, ~10 GB RAM)
+    blip_model: str = "Salesforce/blip-image-captioning-base"
+    # Minimum pixel dimensions for an image to be captioned.
+    # Images smaller than this are silently skipped (icons, bullets, etc.).
+    image_min_width_px: int = 80
+    image_min_height_px: int = 80
+    # Hard cap on images extracted per page / slide (guards against
+    # pathological files with thousands of tiny decorative images).
+    image_max_per_page: int = 20
     
     # API Configuration
     api_host: str = "0.0.0.0"

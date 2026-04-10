@@ -30,6 +30,11 @@ dependencies = [
     "datasets>=2.14.0",    # HuggingFace datasets, required by ragas.evaluate()
     # ── External LLM fallback ─────────────────────────────────────────────────
     "google-genai>=1.0.0",             # Gemini free-tier inference fallback (new SDK)
+    # ── Multimodal image support ──────────────────────────────────────────────
+    # torch + transformers already present (reranker uses them); BLIP uses same install.
+    "Pillow>=10.0",                    # Image loading and manipulation
+    "pdfplumber>=0.10",                # PDF image extraction (per-page pixel images)
+    "python-pptx>=0.6.23",            # PPTX picture shape extraction
 ]
 
 [tool.setuptools]

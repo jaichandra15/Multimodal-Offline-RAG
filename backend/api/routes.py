@@ -518,16 +518,27 @@ async def upload_file(
     Supports: PDF, DOCX, PPTX, XLSX, MD, TXT, MP3, WAV, M4A, FLAC
     """
     # Validate file extension
-    supported_extensions = {
+    text_extensions = {
         '.pdf', '.docx', '.pptx', '.xlsx', '.xls',
         '.md', '.txt', '.mp3', '.wav', '.m4a', '.flac'
     }
-    
+    image_extensions = {
+        '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff', '.tif'
+    }
+    supported_extensions = text_extensions | (
+        image_extensions if settings.image_captioning_enabled else set()
+    )
+
     file_ext = os.path.splitext(file.filename)[1].lower()
     if file_ext not in supported_extensions:
+        hint = (
+            " Image files (.png, .jpg, etc.) require IMAGE_CAPTIONING_ENABLED=true."
+            if file_ext in image_extensions
+            else ""
+        )
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {file_ext}. Supported: {', '.join(supported_extensions)}"
+            detail=f"Unsupported file type: {file_ext}. Supported: {', '.join(sorted(supported_extensions))}.{hint}"
         )
     
     try:
@@ -538,34 +549,63 @@ async def upload_file(
             tmp_file_path = tmp_file.name
         
         logger.info(f"Processing uploaded file: {file.filename}")
+
+        # ── Standalone image upload ──────────────────────────────────────────
+        if file_ext in image_extensions:
+            from backend.ingestion.image_extractor import ImageExtractor
+            from backend.ingestion.image_captioner import get_captioner
+
+            extractor = ImageExtractor(
+                min_width=settings.image_min_width_px,
+                min_height=settings.image_min_height_px,
+            )
+            extracted = extractor.extract(tmp_file_path)
+
+            if not extracted:
+                os.unlink(tmp_file_path)
+                raise HTTPException(status_code=400, detail="Could not load image or image is too small")
+
+            captioner = get_captioner(model_name=settings.blip_model)
+            caption = captioner.caption(extracted[0].image)
+
+            if not caption:
+                os.unlink(tmp_file_path)
+                raise HTTPException(status_code=400, detail="Image captioning returned empty caption")
+
+            content_text = f"[Standalone image file: {file.filename}]: {caption}"
+            title = os.path.splitext(file.filename)[0]
+
+        # ── Text / structured document upload ────────────────────────────────
+        else:
+            # Initialize components
+            config = ChunkingConfig(max_tokens=settings.max_tokens_per_chunk)
+            chunker = DoclingHybridChunker(config)
+            embedder = OllamaEmbedder()
+
+            # Read document
+            pipeline = IngestionPipeline(documents_folder="", clean_before_ingest=False)
+            content_text, docling_doc = pipeline._read_document(tmp_file_path)
+            title = pipeline._extract_title(content_text, tmp_file_path)
         
-        # Initialize components
-        config = ChunkingConfig(max_tokens=settings.max_tokens_per_chunk)
-        chunker = DoclingHybridChunker(config)
-        embedder = OllamaEmbedder()
-        
-        # Read document
-        pipeline = IngestionPipeline(documents_folder="", clean_before_ingest=False)
-        content_text, docling_doc = pipeline._read_document(tmp_file_path)
-        title = pipeline._extract_title(content_text, tmp_file_path)
-        
-        # Chunk document
-        chunks = await chunker.chunk_document(
-            content=content_text,
-            title=title,
-            source=file.filename,
-            metadata={"uploaded": True, "original_filename": file.filename},
-            docling_doc=docling_doc
-        )
-        
-        if not chunks:
-            os.unlink(tmp_file_path)
-            raise HTTPException(status_code=400, detail="No chunks could be created from the file")
-        
-        # Generate embeddings
-        embedded_chunks = await embedder.embed_chunks(chunks)
-        
-        # Save to database
+        # ── Chunk + embed (text path only) ───────────────────────────────────
+        if file_ext not in image_extensions:
+            # Chunk document
+            chunks = await chunker.chunk_document(
+                content=content_text,
+                title=title,
+                source=file.filename,
+                metadata={"uploaded": True, "original_filename": file.filename},
+                docling_doc=docling_doc
+            )
+
+            if not chunks:
+                os.unlink(tmp_file_path)
+                raise HTTPException(status_code=400, detail="No chunks could be created from the file")
+
+            # Generate embeddings
+            embedded_chunks = await embedder.embed_chunks(chunks)
+
+        # ── Save to database ─────────────────────────────────────────────────
         async with db_manager.get_session() as session:
             document = await create_document(
                 session,
@@ -574,29 +614,56 @@ async def upload_file(
                 content=content_text,
                 metadata={"uploaded": True, "original_filename": file.filename}
             )
-            
-            for chunk in embedded_chunks:
+
+            if file_ext in image_extensions:
+                # Single image-caption chunk
+                from backend.ingestion.embedder import OllamaEmbedder as _Emb
+                from backend.ingestion.chunker import DocumentChunk as _DC
+                _emb = _Emb()
+                img_meta = extracted[0].to_metadata_dict()
+                img_meta["uploaded"] = True
+                img_meta["blip_model"] = settings.blip_model
+                cap_chunk = _DC(
+                    content=content_text,
+                    index=0,
+                    start_char=0,
+                    end_char=len(content_text),
+                    metadata=img_meta,
+                )
+                [ec] = await _emb.embed_chunks([cap_chunk])
                 await create_chunk(
                     session,
                     document_id=document.id,
-                    content=chunk.content,
-                    embedding=chunk.embedding,
-                    chunk_index=chunk.index,
-                    metadata=chunk.metadata
+                    content=ec.content,
+                    embedding=ec.embedding,
+                    chunk_index=0,
+                    metadata=ec.metadata,
                 )
-            
+                chunks_saved = 1
+            else:
+                for chunk in embedded_chunks:
+                    await create_chunk(
+                        session,
+                        document_id=document.id,
+                        content=chunk.content,
+                        embedding=chunk.embedding,
+                        chunk_index=chunk.index,
+                        metadata=chunk.metadata
+                    )
+                chunks_saved = len(chunks)
+
             await session.commit()
         
         # Clean up temp file
         os.unlink(tmp_file_path)
-        
-        logger.info(f"Successfully processed {file.filename}: {len(chunks)} chunks created")
-        
+
+        logger.info(f"Successfully processed {file.filename}: {chunks_saved} chunk(s) created")
+
         return FileUploadResponse(
             status="success",
             message=f"File '{file.filename}' processed successfully",
             document_id=str(document.id),
-            chunks_created=len(chunks),
+            chunks_created=chunks_saved,
             filename=file.filename
         )
         
