@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Mac M1/M2/M3 (Apple Silicon) override
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.m1.yml up -d --build
+# Or via Makefile:
+#   make start-m1
+#
+# What this file does:
+#   • Forces linux/arm64 platform on every service  → no Rosetta x86 emulation
+#   • Ollama uses Metal GPU automatically on arm64  → no NVIDIA driver needed
+#   • Switches to lighter phi3:mini LLM (fits in 8 GB RAM, fast on M-series)
+#   • Increases Ollama keep-alive so the model stays warm between requests
+#   • Disables the reranker by default (saves ~1 GB RAM — re-enable if you have 16 GB+)
+#   • Adds sensible memory limits to prevent macOS swap storms
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL + pgvector ──────────────────────────────────────────────────
+  postgres:
+    platform: linux/arm64
+    image: pgvector/pgvector:pg16          # multi-arch image, arm64 pulled automatically
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ── Ollama ─────────────────────────────────────────────────────────────────
+  ollama:
+    platform: linux/arm64
+    image: ollama/ollama:latest            # official image ships arm64 layer
+    environment:
+      # Keep model loaded for 30 min between requests (avoids cold-load latency)
+      OLLAMA_KEEP_ALIVE: "30m"
+      # Number of layers to offload to Metal GPU (0 = CPU only; leave at 999 to
+      # let Ollama decide based on available VRAM)
+      OLLAMA_NUM_GPU: "999"
+      # Reduce context window to save RAM on 8 GB machines
+      OLLAMA_NUM_CTX: "2048"
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # ── Model puller ───────────────────────────────────────────────────────────
+  # phi3:mini (3.8 B, ~2.2 GB) is faster than mistral:7b on M1 8 GB machines.
+  # Change OLLAMA_LLM_MODEL in your .env to override.
+  model-puller:
+    platform: linux/arm64
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      # Override at compose-up time: LLM_MODEL=mistral make start-m1
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-phi3:mini}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      # Force arm64 build so all wheels are native — avoids slow Rosetta pip
+      args:
+        BUILDPLATFORM: linux/arm64
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/offrag}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-phi3:mini}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      OLLAMA_TIMEOUT: "300"
+      # ── Gemini fallback (overrides Ollama LLM inference) ──────────────────
+      LLM_BACKEND: ${LLM_BACKEND:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+      # ── Reranker: disable on 8 GB M1 to save ~1 GB RAM ───────────────────
+      # Set to true if you have 16 GB+ RAM
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  # ── Next.js Frontend ───────────────────────────────────────────────────────
+  frontend:
+    platform: linux/arm64
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    deploy:
+      resources:
+        limits:
+          memory: 512m

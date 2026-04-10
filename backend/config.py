@@ -4,7 +4,7 @@ All settings are loaded from environment variables.
 """
 
 from pydantic_settings import BaseSettings
-from typing import Optional
+from typing import Literal, Optional
 
 
 class Settings(BaseSettings):
@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     db_pool_max_size: int = 20
     db_command_timeout: int = 60
     
+    # LLM Backend: 'ollama' (local) or 'gemini' (cloud fallback)
+    llm_backend: Literal["ollama", "gemini"] = "ollama"
+
+    # Gemini Configuration (used when llm_backend='gemini')
+    gemini_api_key: Optional[str] = None
+    gemini_model: str = "gemini-1.5-flash"  # free-tier model
+
     # Ollama Configuration
     ollama_base_url: str = "http://ollama:11434"
     ollama_llm_model: str = "mistral"

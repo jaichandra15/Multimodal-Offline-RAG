@@ -28,6 +28,8 @@ dependencies = [
     "ragas>=0.2.0",
     "openai>=1.0.0",        # used to point at Ollama's OpenAI-compatible /v1 API
     "datasets>=2.14.0",    # HuggingFace datasets, required by ragas.evaluate()
+    # ── External LLM fallback ─────────────────────────────────────────────────
+    "google-genai>=1.0.0",             # Gemini free-tier inference fallback (new SDK)
 ]
 
 [tool.setuptools]

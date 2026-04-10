@@ -36,6 +36,15 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional conversation history for context"
     )
+    metadata_filter: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Optional JSONB metadata filter applied to chunk metadata during retrieval. "
+            "Only chunks whose metadata contains ALL specified key-value pairs "
+            "will be returned. Example: {\"file_path\": \"report.pdf\"} or "
+            "{\"page\": 5}"
+        )
+    )
 
 
 class ChatResponse(BaseModel):
@@ -63,6 +72,15 @@ class SearchRequest(BaseModel):
         ge=1,
         le=20,
         description="Maximum number of results"
+    )
+    metadata_filter: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Optional JSONB metadata filter applied to chunk metadata. "
+            "Only chunks whose metadata contains ALL specified key-value pairs "
+            "will be returned. Example: {\"page\": 3} or "
+            "{\"file_path\": \"report.pdf\"}"
+        )
     )
 
 

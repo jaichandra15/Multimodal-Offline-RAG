@@ -22,7 +22,26 @@ class RAGEngine:
     
     def __init__(self):
         """Initialize RAG engine."""
+        # Ollama is always used for embeddings (vector search).
         self.ollama = ollama_client
+
+        # ── LLM backend selection ──────────────────────────────────────────
+        if settings.llm_backend == "gemini":
+            from backend.core.gemini_client import get_gemini_client
+            self._llm = get_gemini_client()
+            self._llm_label = f"gemini/{settings.gemini_model}"
+            logger.info(
+                f"RAGEngine: using Gemini backend ({settings.gemini_model}) "
+                "for LLM inference; Ollama used for embeddings only."
+            )
+        else:
+            self._llm = ollama_client  # type: ignore[assignment]
+            self._llm_label = settings.ollama_llm_model
+            logger.info(
+                f"RAGEngine: using Ollama backend ({settings.ollama_llm_model}) "
+                "for LLM inference."
+            )
+
         self.max_context_length = 6000   # ↑ from 3000 — gives model more context
         self.use_hybrid_search = settings.use_hybrid_search
         self.use_reranker = settings.reranker_enabled
@@ -122,7 +141,8 @@ Answer (use Markdown formatting as instructed above):"""
         session: AsyncSession,
         query: str,
         limit: Optional[int] = None,
-        use_hybrid: Optional[bool] = None
+        use_hybrid: Optional[bool] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """
         Search knowledge base for relevant chunks.
@@ -134,6 +154,10 @@ Answer (use Markdown formatting as instructed above):"""
             query: Search query
             limit: Maximum number of results
             use_hybrid: Override hybrid search setting (default: self.use_hybrid_search)
+            metadata_filter: Optional JSONB containment filter applied to chunk
+                metadata. Only chunks whose metadata contains ALL specified
+                key-value pairs are returned. E.g. {"page": 3} or
+                {"file_path": "report.pdf"}.
             
         Returns:
             List of SearchResult instances
@@ -160,14 +184,16 @@ Answer (use Markdown formatting as instructed above):"""
                 session,
                 query=query,
                 query_embedding=query_embedding,
-                limit=fetch_limit
+                limit=fetch_limit,
+                metadata_filter=metadata_filter
             )
         else:
             logger.info("Using vector-only search...")
             results = await vector_search(
                 session,
                 query_embedding,
-                limit=fetch_limit
+                limit=fetch_limit,
+                metadata_filter=metadata_filter
             )
         
         # Apply reranking if enabled
@@ -203,6 +229,7 @@ Answer (use Markdown formatting as instructed above):"""
         session: AsyncSession,
         query: str,
         limit: Optional[int] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Search with full pipeline trace for real-time visualization.
@@ -228,11 +255,13 @@ Answer (use Markdown formatting as instructed above):"""
         t_retrieval = time.time()
         if should_hybrid:
             raw_results = await hybrid_search(
-                session, query=query, query_embedding=query_embedding, limit=fetch_limit
+                session, query=query, query_embedding=query_embedding,
+                limit=fetch_limit, metadata_filter=metadata_filter
             )
         else:
             raw_results = await vector_search(
-                session, query_embedding, limit=fetch_limit
+                session, query_embedding, limit=fetch_limit,
+                metadata_filter=metadata_filter
             )
         retrieval_ms = round((time.time() - t_retrieval) * 1000, 1)
         
@@ -304,6 +333,7 @@ Answer (use Markdown formatting as instructed above):"""
                 "total_ms": total_ms,
                 "pre_rerank": pre_rerank,
                 "post_rerank": post_rerank,
+                "metadata_filter": metadata_filter,
             },
         }
     
@@ -313,6 +343,7 @@ Answer (use Markdown formatting as instructed above):"""
         query: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         search_results: Optional[List[SearchResult]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Generate answer to user query using RAG.
@@ -324,13 +355,17 @@ Answer (use Markdown formatting as instructed above):"""
             search_results: Pre-fetched search results. If provided, the search
                 step is skipped entirely — use this to avoid double-searching
                 when the caller already has results (e.g. chat()).
+            metadata_filter: Optional JSONB metadata filter forwarded to the
+                search step (ignored when search_results is provided).
 
         Returns:
             Generated answer
         """
         # Only search if results were not provided by the caller.
         if search_results is None:
-            search_results = await self.search(session, query)
+            search_results = await self.search(
+                session, query, metadata_filter=metadata_filter
+            )
 
         # Format context using the shared helper
         context = self._format_context(search_results)
@@ -339,13 +374,13 @@ Answer (use Markdown formatting as instructed above):"""
         prompt = self._build_prompt(query, context, conversation_history)
 
         # Generate response
-        logger.info("Generating response...")
+        logger.info(f"Generating response via {self._llm_label}...")
         start_time = time.time()
-        answer = await self.ollama.generate_chat_completion(prompt)
+        answer = await self._llm.generate_chat_completion(prompt)
         generation_duration = time.time() - start_time
 
         # Record metrics
-        metrics.rag_generation_latency.labels(model=settings.ollama_llm_model).observe(generation_duration)
+        metrics.rag_generation_latency.labels(model=self._llm_label).observe(generation_duration)
         logger.info(f"Generated response in {generation_duration:.2f}s")
 
         return answer
@@ -356,6 +391,7 @@ Answer (use Markdown formatting as instructed above):"""
         query: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         search_results: Optional[List[SearchResult]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Generate answer with streaming.
@@ -367,13 +403,17 @@ Answer (use Markdown formatting as instructed above):"""
             search_results: Pre-fetched search results. If provided, the search
                 step is skipped entirely — avoids double-searching in the
                 streaming route which already calls search_detailed().
+            metadata_filter: Optional JSONB metadata filter forwarded to the
+                search step (ignored when search_results is provided).
 
         Yields:
             Text chunks as they are generated
         """
         # Only search if results were not provided by the caller.
         if search_results is None:
-            search_results = await self.search(session, query)
+            search_results = await self.search(
+                session, query, metadata_filter=metadata_filter
+            )
 
         # Format context using the shared helper
         context = self._format_context(search_results)
@@ -382,21 +422,22 @@ Answer (use Markdown formatting as instructed above):"""
         prompt = self._build_prompt(query, context, conversation_history)
 
         # Stream response with timing
-        logger.info("Streaming response...")
+        logger.info(f"Streaming response via {self._llm_label}...")
         start_time = time.time()
-        async for chunk in self.ollama.generate_chat_completion_stream(prompt):
+        async for chunk in self._llm.generate_chat_completion_stream(prompt):
             yield chunk
 
         # Record generation metrics
         generation_duration = time.time() - start_time
-        metrics.rag_generation_latency.labels(model=settings.ollama_llm_model).observe(generation_duration)
+        metrics.rag_generation_latency.labels(model=self._llm_label).observe(generation_duration)
         logger.info(f"Generation completed in {generation_duration:.2f}s")
     
     async def chat(
         self,
         session: AsyncSession,
         user_query: str,
-        conversation_history: Optional[List[Dict[str, str]]] = None
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Complete chat interaction with RAG.
@@ -405,12 +446,17 @@ Answer (use Markdown formatting as instructed above):"""
             session: Database session
             user_query: User's message
             conversation_history: Optional conversation history
+            metadata_filter: Optional JSONB metadata filter applied to the
+                retrieval step. Only chunks whose metadata contains ALL
+                specified key-value pairs will be included in context.
 
         Returns:
             Dictionary with response, citations, and updated conversation history
         """
         # Search once — pass results to generate_answer to avoid a second search.
-        search_results = await self.search(session, user_query)
+        search_results = await self.search(
+            session, user_query, metadata_filter=metadata_filter
+        )
 
         # Generate answer, reusing the results fetched above.
         answer = await self.generate_answer(

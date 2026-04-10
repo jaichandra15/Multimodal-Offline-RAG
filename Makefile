@@ -16,10 +16,11 @@
 #   make rebuild    — rebuild all images from scratch
 # ═════════════════════════════════════════════════════════════════════════════
 
-.PHONY: setup start start-gpu stop restart ingest logs logs-back status clean rebuild help
+.PHONY: setup start start-gpu start-m1 stop restart ingest logs logs-back status clean rebuild help
 
 COMPOSE       = docker compose
 COMPOSE_GPU   = docker compose -f docker-compose.yml -f docker-compose.gpu.yml
+COMPOSE_M1    = docker compose -f docker-compose.yml -f docker-compose.m1.yml
 
 # ── First-time setup ──────────────────────────────────────────────────────────
 setup:
@@ -59,6 +60,19 @@ start-gpu: _check_env
 	@echo "✅  Services started (GPU mode)"
 	@echo "    Frontend  → http://localhost:3000"
 	@echo "    Backend   → http://localhost:8000"
+
+start-m1: _check_env
+	@echo "🍎  Starting RAG stack (Mac M1/M2/M3 — Apple Silicon)..."
+	@echo "    Platform : linux/arm64  •  LLM backend : Gemini / phi3:mini"
+	DOCKER_DEFAULT_PLATFORM=linux/arm64 $(COMPOSE_M1) up -d --build
+	@echo ""
+	@echo "✅  Services started (M1 mode)"
+	@echo "    Frontend  → http://localhost:3000"
+	@echo "    Backend   → http://localhost:8000"
+	@echo "    Ollama    → http://localhost:11434"
+	@echo ""
+	@echo "    Tip: first run pulls phi3:mini and nomic-embed-text (~2.5 GB total)"
+	@echo "    Run 'make logs' to follow progress"
 
 stop:
 	@echo "🛑  Stopping all services..."
@@ -116,7 +130,8 @@ help:
 	@echo "  Multimodal Offline RAG — Available Commands"
 	@echo "  ─────────────────────────────────────────────"
 	@echo "  make setup       Create .env from template (run once)"
-	@echo "  make start       Start all services (CPU)"
+	@echo "  make start       Start all services (CPU / x86)"
+	@echo "  make start-m1    Start all services (Mac M1/M2/M3 Apple Silicon)"
 	@echo "  make start-gpu   Start all services (GPU / Lightning AI)"
 	@echo "  make stop        Stop all services"
 	@echo "  make restart     Restart all services"

@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+import json
 
 from backend.database.models import Document, Chunk
 from backend.config import settings
@@ -216,6 +217,31 @@ async def get_chunks_by_document(
 
 
 # ============================================================================
+# Metadata Filter Helper
+# ============================================================================
+
+def _build_metadata_filter_clause(metadata_filter: Optional[Dict[str, Any]]) -> str:
+    """
+    Return a SQL snippet that constrains chunk metadata using the JSONB
+    containment operator (@>).
+
+    If *metadata_filter* is None or empty the returned string is empty so the
+    caller can safely concatenate it into any WHERE clause.
+
+    Example::
+
+        _build_metadata_filter_clause({"page": 3})
+        # => "AND c.metadata @> :meta_filter"
+
+    The actual JSON value must be bound under the parameter name
+    ``meta_filter`` when executing the query.
+    """
+    if not metadata_filter:
+        return ""
+    return "AND c.metadata @> :meta_filter"
+
+
+# ============================================================================
 # Vector Search Operations
 # ============================================================================
 
@@ -257,7 +283,8 @@ async def vector_search(
     session: AsyncSession,
     query_embedding: List[float],
     limit: int = None,
-    similarity_threshold: float = None
+    similarity_threshold: float = None,
+    metadata_filter: Optional[Dict[str, Any]] = None
 ) -> List[SearchResult]:
     """
     Perform vector similarity search using cosine distance.
@@ -267,6 +294,9 @@ async def vector_search(
         query_embedding: Query embedding vector
         limit: Maximum number of results (defaults to settings.top_k_results)
         similarity_threshold: Minimum similarity score (defaults to settings.similarity_threshold)
+        metadata_filter: Optional dict of metadata key-value pairs to filter
+            chunks by (JSONB containment). E.g. {"page": 3} or
+            {"file_path": "report.pdf"}.
         
     Returns:
         List of SearchResult instances ordered by similarity (descending)
@@ -277,9 +307,11 @@ async def vector_search(
     if similarity_threshold is None:
         similarity_threshold = settings.similarity_threshold
     
+    meta_clause = _build_metadata_filter_clause(metadata_filter)
+
     # Use pgvector's cosine distance operator (<=>)
     # Similarity = 1 - distance (so higher is better)
-    query = text("""
+    query = text(f"""
         SELECT 
             c.id AS chunk_id,
             c.document_id,
@@ -292,6 +324,7 @@ async def vector_search(
         JOIN documents d ON c.document_id = d.id
         WHERE c.embedding IS NOT NULL
             AND 1 - (c.embedding <=> :query_embedding) >= :threshold
+            {meta_clause}
         ORDER BY c.embedding <=> :query_embedding
         LIMIT :limit
     """)
@@ -299,16 +332,20 @@ async def vector_search(
     # Convert embedding to string format for pgvector
     embedding_str = '[' + ','.join(map(str, query_embedding)) + ']'
     
-    logger.info(f"Vector search: threshold={similarity_threshold}, limit={limit}")
+    params: Dict[str, Any] = {
+        "query_embedding": embedding_str,
+        "threshold": similarity_threshold,
+        "limit": limit,
+    }
+    if metadata_filter:
+        params["meta_filter"] = json.dumps(metadata_filter)
     
-    result = await session.execute(
-        query,
-        {
-            "query_embedding": embedding_str,
-            "threshold": similarity_threshold,
-            "limit": limit
-        }
+    logger.info(
+        f"Vector search: threshold={similarity_threshold}, limit={limit}"
+        + (f", metadata_filter={metadata_filter}" if metadata_filter else "")
     )
+    
+    result = await session.execute(query, params)
     
     rows = result.fetchall()
     
@@ -369,7 +406,8 @@ async def keyword_search(
     session: AsyncSession,
     query: str,
     limit: int = None,
-    similarity_threshold: float = 0.3
+    similarity_threshold: float = 0.3,
+    metadata_filter: Optional[Dict[str, Any]] = None
 ) -> List[SearchResult]:
     """
     Perform fuzzy keyword search using PostgreSQL's pg_trgm extension.
@@ -386,6 +424,8 @@ async def keyword_search(
         query: Search query text
         limit: Maximum number of results
         similarity_threshold: Minimum trigram similarity (0.0-1.0, default 0.3)
+        metadata_filter: Optional dict of metadata key-value pairs to filter
+            chunks by (JSONB containment).
         
     Returns:
         List of SearchResult instances ordered by relevance
@@ -400,7 +440,15 @@ async def keyword_search(
         logger.info("No meaningful keywords found in query")
         return []
     
-    logger.info(f"Keyword search for: {query[:50]}... (keywords: {keywords[:5]})")
+    logger.info(
+        f"Keyword search for: {query[:50]}... (keywords: {keywords[:5]})"
+        + (f", metadata_filter={metadata_filter}" if metadata_filter else "")
+    )
+
+    meta_clause = _build_metadata_filter_clause(metadata_filter)
+    meta_params: Dict[str, Any] = {}
+    if metadata_filter:
+        meta_params["meta_filter"] = json.dumps(metadata_filter)
     
     # Use word_similarity which finds the best matching word within the text
     # This is better than similarity() for searching within longer text
@@ -412,7 +460,7 @@ async def keyword_search(
         # combined with word_similarity scoring for ranking
         keyword_conditions = []
         similarity_scores = []
-        params = {"limit": limit, "num_keywords": float(len(keywords))}
+        params: Dict[str, Any] = {"limit": limit, "num_keywords": float(len(keywords))}
         
         for i, kw in enumerate(keywords):
             # Use ILIKE with prefix to handle OCR issues (match first 4+ chars)
@@ -422,6 +470,7 @@ async def keyword_search(
             params[f"kw{i}"] = kw
             params[f"pattern{i}"] = f"%{prefix}%"
         
+        params.update(meta_params)
         where_clause = " OR ".join(keyword_conditions)
         score_clause = " + ".join(similarity_scores)
         
@@ -436,7 +485,8 @@ async def keyword_search(
                 d.source AS document_source
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
-            WHERE {where_clause}
+            WHERE ({where_clause})
+                {meta_clause}
             ORDER BY rank DESC
             LIMIT :limit
         """)
@@ -457,6 +507,7 @@ async def keyword_search(
             ilike_conditions.append(f"c.content ILIKE :pattern{i}")
             params[f"pattern{i}"] = f"%{kw}%"
         
+        params.update(meta_params)
         where_clause = " OR ".join(ilike_conditions) if ilike_conditions else "TRUE"
         
         fallback_query = text(f"""
@@ -470,7 +521,8 @@ async def keyword_search(
                 d.source AS document_source
             FROM chunks c
             JOIN documents d ON c.document_id = d.id
-            WHERE {where_clause}
+            WHERE ({where_clause})
+                {meta_clause}
             LIMIT :limit
         """)
         
@@ -551,7 +603,8 @@ async def hybrid_search(
     query_embedding: List[float],
     limit: int = None,
     vector_weight: float = 0.6,
-    keyword_weight: float = 0.4
+    keyword_weight: float = 0.4,
+    metadata_filter: Optional[Dict[str, Any]] = None
 ) -> List[SearchResult]:
     """
     Perform hybrid search combining vector similarity and keyword matching.
@@ -569,6 +622,8 @@ async def hybrid_search(
         limit: Maximum number of final results
         vector_weight: Weight for vector results (default 0.6)
         keyword_weight: Weight for keyword results (default 0.4)
+        metadata_filter: Optional dict of metadata key-value pairs to filter
+            both sub-searches (JSONB containment).
         
     Returns:
         Combined list of SearchResult instances
@@ -579,11 +634,20 @@ async def hybrid_search(
     # Fetch more results initially for better fusion
     fetch_limit = limit * 3
     
-    logger.info(f"Hybrid search: vector_weight={vector_weight}, keyword_weight={keyword_weight}")
+    logger.info(
+        f"Hybrid search: vector_weight={vector_weight}, keyword_weight={keyword_weight}"
+        + (f", metadata_filter={metadata_filter}" if metadata_filter else "")
+    )
     
-    # Perform both searches
-    vector_results = await vector_search(session, query_embedding, limit=fetch_limit)
-    keyword_results = await keyword_search(session, query, limit=fetch_limit)
+    # Perform both searches (both receive the same metadata filter)
+    vector_results = await vector_search(
+        session, query_embedding, limit=fetch_limit,
+        metadata_filter=metadata_filter
+    )
+    keyword_results = await keyword_search(
+        session, query, limit=fetch_limit,
+        metadata_filter=metadata_filter
+    )
     
     logger.info(f"Vector search: {len(vector_results)} results, Keyword search: {len(keyword_results)} results")
     

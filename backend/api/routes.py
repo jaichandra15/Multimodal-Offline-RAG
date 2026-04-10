@@ -136,7 +136,12 @@ async def chat(
         })
         
         # Generate response using RAG
-        result = await rag_engine.chat(session, request.message, conversation_history)
+        result = await rag_engine.chat(
+            session,
+            request.message,
+            conversation_history,
+            metadata_filter=request.metadata_filter or None,
+        )
         
         # Convert back to ChatMessage format
         updated_history = [
@@ -236,7 +241,11 @@ async def chat_stream(
             
             # Search knowledge base with full pipeline trace
             yield f"data: {json.dumps({'status': 'searching'})}\n\n"
-            detailed = await rag_engine.search_detailed(session, request.message)
+            detailed = await rag_engine.search_detailed(
+                session,
+                request.message,
+                metadata_filter=request.metadata_filter or None,
+            )
             search_results = detailed["results"]
             
             # Emit retrieval trace (pre/post rerank, timing breakdown)
@@ -322,7 +331,12 @@ async def search(
     Returns relevant chunks with similarity scores.
     """
     try:
-        results = await rag_engine.search(session, request.query, request.limit)
+        results = await rag_engine.search(
+            session,
+            request.query,
+            request.limit,
+            metadata_filter=request.metadata_filter or None,
+        )
         
         items = [
             SearchResultItem(

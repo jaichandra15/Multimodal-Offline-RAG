@@ -3,7 +3,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── 1. Deps: install npm packages ─────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM --platform=${TARGETPLATFORM:-linux/amd64} node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 COPY package*.json ./
