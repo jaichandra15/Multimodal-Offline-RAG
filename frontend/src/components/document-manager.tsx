@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Upload, Loader2, FileText, Calendar } from 'lucide-react';
+import { Upload, Loader2, FileText, Calendar, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -62,7 +62,7 @@ export function DocumentManager() {
                 className="hidden"
                 onChange={handleFileUpload}
                 disabled={uploading}
-                accept=".pdf,.docx,.pptx,.xlsx,.md,.txt,.mp3,.wav,.m4a,.flac"
+                accept=".pdf,.docx,.pptx,.xlsx,.md,.txt,.mp3,.wav,.m4a,.flac,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tiff,.tif"
               />
               <label htmlFor="file-upload" className="flex-1">
                 <Button
@@ -96,7 +96,7 @@ export function DocumentManager() {
             )}
 
             <p className="text-sm text-muted-foreground">
-              Supported: PDF, Word, PowerPoint, Excel, Markdown, Text, Audio (MP3, WAV)
+              Supported: PDF, Word, PowerPoint, Excel, Markdown, Text, Audio (MP3, WAV), Images (PNG, JPG, WEBP, GIF)
             </p>
           </div>
         </CardContent>
@@ -119,7 +119,11 @@ export function DocumentManager() {
                 {documentsData?.documents.map((doc) => (
                   <Card key={doc.id} className="p-4">
                     <div className="flex items-start gap-3">
-                      <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      {/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(doc.source || '') ? (
+                        <ImageIcon className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      ) : (
+                        <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      )}
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium truncate">{doc.title}</h4>
                         <p className="text-sm text-muted-foreground truncate">
