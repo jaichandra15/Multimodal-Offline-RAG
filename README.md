@@ -693,13 +693,6 @@ The reranker adds three specialized metrics:
 - `reranker_rank_change_positions` - Average position change after reranking
 
 Higher rank change indicates the reranker is improving relevance.
-
----
-
-## 📝 License
-
-This project is built for educational purposes as part of Smart India Hackathon 2025.
-
 ---
 
 **Built with ❤️ using:**
